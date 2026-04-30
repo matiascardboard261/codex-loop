@@ -1,0 +1,21 @@
+{
+  "name": "codex-loop-plugins",
+  "interface": {
+    "displayName": "Codex Loop Plugins"
+  },
+  "plugins": [
+    {
+      "name": "codex-timed-loop",
+      "source": {
+        "source": "local",
+        "path": "./plugins/codex-timed-loop"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}
+
