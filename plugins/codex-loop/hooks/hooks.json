@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "bin=\"${CODEX_HOME:-$HOME/.codex}/codex-loop/bin/codex-loop\"; if [ -x \"$bin\" ]; then \"$bin\" hook stop; else exit 0; fi",
+            "statusMessage": "Evaluating the codex loop",
+            "timeout": 30,
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "command": "bin=\"${CODEX_HOME:-$HOME/.codex}/codex-loop/bin/codex-loop\"; if [ -x \"$bin\" ]; then \"$bin\" hook user-prompt-submit; else exit 0; fi",
+            "statusMessage": "Preparing the codex loop",
+            "timeout": 30,
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  }
+}

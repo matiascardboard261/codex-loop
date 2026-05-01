@@ -1,0 +1,39 @@
+{
+  "name": "codex-loop",
+  "version": "1.0.0",
+  "description": "Codex lifecycle loop hooks for minimum-duration and rounds-based agent work.",
+  "author": {
+    "name": "Pedro Nauck",
+    "url": "https://github.com/pedronauck"
+  },
+  "homepage": "https://github.com/pedronauck/codex-loop",
+  "repository": "https://github.com/pedronauck/codex-loop",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "hooks",
+    "automation",
+    "qa",
+    "cli"
+  ],
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
+  "interface": {
+    "displayName": "Codex Loop",
+    "shortDescription": "Lifecycle hooks for time- or rounds-based Codex work.",
+    "longDescription": "Codex Loop keeps explicitly activated Codex tasks running until they satisfy a minimum duration or target number of deliberate rounds.",
+    "developerName": "Pedro Nauck",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/pedronauck/codex-loop",
+    "defaultPrompt": [
+      "Install Codex Loop globally on this machine.",
+      "Set up codex-loop hooks for repeated QA and long-running implementation work."
+    ],
+    "brandColor": "#10A37F",
+    "screenshots": []
+  }
+}

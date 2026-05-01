@@ -1,5 +1,0 @@
-# Optional continuation guidance appended to every automatic continuation.
-# Leave these blank if you want generic behavior only.
-optional_skill_name = ""
-optional_skill_path = ""
-extra_continuation_guidance = ""

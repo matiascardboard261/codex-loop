@@ -1,4 +1,10 @@
 .DS_Store
 __pycache__/
 *.py[cod]
-
+.env
+.tmp/
+.cache/
+bin/
+dist/
+coverage.out
+coverage.html
