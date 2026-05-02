@@ -81,6 +81,66 @@ func TestUpgradeDownloadsVerifiesInstallsAndRefreshesMarketplace(t *testing.T) {
 	assertContains(t, joined, "Refreshed Codex plugin marketplace")
 }
 
+func TestUpgradeReplacesMarketplaceWhenConfiguredFromDifferentSource(t *testing.T) {
+	archiveName, binaryName, err := releaseArchiveName("0.1.2", "darwin", "arm64")
+	if err != nil {
+		t.Fatalf("archive name: %v", err)
+	}
+	archiveContent := tarGzipArchive(t, binaryName, []byte("newer-binary\n"))
+	checksum := sha256.Sum256(archiveContent)
+	checksumsContent := []byte(fmt.Sprintf("%s  %s\n", hex.EncodeToString(checksum[:]), archiveName))
+
+	server := releaseServer(t, "v0.1.2", map[string][]byte{
+		archiveName:     archiveContent,
+		"checksums.txt": checksumsContent,
+	})
+
+	codexHome := filepath.Join(t.TempDir(), ".codex-home")
+	paths, err := loop.NewPaths(codexHome)
+	if err != nil {
+		t.Fatalf("new paths: %v", err)
+	}
+	targetBinary := filepath.Join(t.TempDir(), "bin", "codex-loop")
+	if err := os.MkdirAll(filepath.Dir(targetBinary), 0o755); err != nil {
+		t.Fatalf("create target dir: %v", err)
+	}
+	if err := os.WriteFile(targetBinary, []byte("old-binary\n"), 0o755); err != nil {
+		t.Fatalf("write old target: %v", err)
+	}
+	codexLog := filepath.Join(t.TempDir(), "codex-args.log")
+	fakeCodex := writeConflictingMarketplaceCodex(t, codexLog)
+
+	messages, err := Upgrade(context.Background(), paths, Options{
+		Version:      "v0.1.2",
+		APIBaseURL:   server.URL,
+		TargetBinary: targetBinary,
+		CodexBinary:  fakeCodex,
+		GOOS:         "darwin",
+		GOARCH:       "arm64",
+	})
+	if err != nil {
+		t.Fatalf("upgrade: %v", err)
+	}
+
+	if got := readFile(t, targetBinary); got != "newer-binary\n" {
+		t.Fatalf("expected target binary updated, got %q", got)
+	}
+	logLines := strings.Split(strings.TrimSpace(readFile(t, codexLog)), "\n")
+	expected := []string{
+		"plugin marketplace add compozy/codex-loop --ref v0.1.2",
+		"plugin marketplace remove codex-loop-plugins",
+		"plugin marketplace add compozy/codex-loop --ref v0.1.2",
+		"plugin marketplace upgrade codex-loop-plugins",
+	}
+	if strings.Join(logLines, "\n") != strings.Join(expected, "\n") {
+		t.Fatalf("unexpected codex commands\nexpected: %#v\nactual: %#v", expected, logLines)
+	}
+
+	joined := strings.Join(messages, "\n")
+	assertContains(t, joined, "Replaced existing Codex plugin marketplace codex-loop-plugins")
+	assertContains(t, joined, "Restart Codex")
+}
+
 func TestUpgradeRejectsChecksumMismatchBeforeReplacingBinary(t *testing.T) {
 	t.Parallel()
 
@@ -255,6 +315,27 @@ func writeFakeCodex(t *testing.T, logPath string) string {
 		t.Fatalf("write fake codex: %v", err)
 	}
 	t.Setenv("CODEX_LOOP_TEST_CODEX_LOG", logPath)
+	return path
+}
+
+func writeConflictingMarketplaceCodex(t *testing.T, logPath string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "codex")
+	markerPath := filepath.Join(t.TempDir(), "first-add-failed")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$CODEX_LOOP_TEST_CODEX_LOG"
+if [ "$*" = "plugin marketplace add compozy/codex-loop --ref v0.1.2" ] && [ ! -f "$CODEX_LOOP_TEST_CONFLICT_MARKER" ]; then
+  touch "$CODEX_LOOP_TEST_CONFLICT_MARKER"
+  printf "Error: marketplace 'codex-loop-plugins' is already added from a different source; remove it before adding this source\n" >&2
+  exit 1
+fi
+exit 0
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake codex: %v", err)
+	}
+	t.Setenv("CODEX_LOOP_TEST_CODEX_LOG", logPath)
+	t.Setenv("CODEX_LOOP_TEST_CONFLICT_MARKER", markerPath)
 	return path
 }
 

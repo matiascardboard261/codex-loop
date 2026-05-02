@@ -479,11 +479,27 @@ func refreshMarketplace(ctx context.Context, opts Options, tag string) ([]string
 	}
 
 	source := opts.Owner + "/" + opts.Repo
+	replacedMarketplace := false
 	if err := runCommand(ctx, codexBinary, "plugin", "marketplace", "add", source, "--ref", tag); err != nil {
-		return nil, err
+		if !isDifferentSourceMarketplaceError(err) {
+			return nil, err
+		}
+		if err := runCommand(ctx, codexBinary, "plugin", "marketplace", "remove", defaultMarketplace); err != nil {
+			return nil, err
+		}
+		if err := runCommand(ctx, codexBinary, "plugin", "marketplace", "add", source, "--ref", tag); err != nil {
+			return nil, err
+		}
+		replacedMarketplace = true
 	}
 	if err := runCommand(ctx, codexBinary, "plugin", "marketplace", "upgrade", defaultMarketplace); err != nil {
 		return nil, err
+	}
+	if replacedMarketplace {
+		return []string{
+			fmt.Sprintf("Replaced existing Codex plugin marketplace %s with %s at %s.", defaultMarketplace, source, tag),
+			"Restart Codex so plugin hooks and skills reload.",
+		}, nil
 	}
 	return []string{
 		fmt.Sprintf("Refreshed Codex plugin marketplace %s at %s.", defaultMarketplace, tag),
@@ -498,6 +514,13 @@ func runCommand(ctx context.Context, command string, args ...string) error {
 		return fmt.Errorf("run %s %s: %w: %s", command, strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+func isDifferentSourceMarketplaceError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "marketplace '"+defaultMarketplace+"' is already added from a different source")
 }
 
 func releaseArchiveName(version string, goos string, goarch string) (string, string, error) {
