@@ -1,0 +1,22 @@
+## codex-loop {{ .Version }}
+
+`codex-loop` is a local-first Codex CLI and plugin that keeps explicitly activated Codex tasks running until they satisfy either a minimum duration or a target number of deliberate rounds.
+
+### Installation
+
+#### Go Install
+
+```bash
+go install github.com/compozy/codex-loop/cmd/codex-loop@{{ .Tag }}
+codex-loop install
+```
+
+#### Binary Download
+
+Download the appropriate `codex-loop_<os>_<arch>` archive for your platform, extract it, put `codex-loop` on your `PATH`, and run:
+
+```bash
+codex-loop install
+```
+
+The archive includes the CLI binary, README, license, and Codex plugin bundle.

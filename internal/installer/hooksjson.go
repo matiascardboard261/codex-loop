@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/pedronauck/codex-loop/internal/loop"
+	"github.com/compozy/codex-loop/internal/loop"
 )
 
 const (

@@ -14,7 +14,7 @@ description: Install or refresh the Codex Loop runtime for structured [[CODEX_LO
 
 **Step 2: Install or refresh the runtime**
 1. If `codex-loop` is not on `PATH`, install it:
-   - `go install github.com/pedronauck/codex-loop/cmd/codex-loop@latest`
+   - `go install github.com/compozy/codex-loop/cmd/codex-loop@latest`
 2. Execute:
    - `codex-loop install`
 3. Read the command output and report the runtime path, loop state path, managed hook config path, and config path.

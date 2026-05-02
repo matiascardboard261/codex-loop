@@ -1,4 +1,4 @@
-module github.com/pedronauck/codex-loop
+module github.com/compozy/codex-loop
 
 go 1.24
 

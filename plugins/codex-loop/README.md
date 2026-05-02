@@ -10,7 +10,7 @@ The plugin contributes:
 The hook commands call the runtime binary installed by:
 
 ```bash
-go install github.com/pedronauck/codex-loop/cmd/codex-loop@latest
+go install github.com/compozy/codex-loop/cmd/codex-loop@latest
 codex-loop install
 ```
 

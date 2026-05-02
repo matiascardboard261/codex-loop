@@ -6,7 +6,7 @@ else
 MAGE_RUN = $(MAGE)
 endif
 
-.PHONY: deps fmt vet lint test build verify help
+.PHONY: deps fmt vet lint test build release-check release-snapshot verify help
 
 deps:
 	@$(MAGE_RUN) deps
@@ -25,6 +25,12 @@ test:
 
 build:
 	@$(MAGE_RUN) build
+
+release-check:
+	@$(MAGE_RUN) releaseCheck
+
+release-snapshot:
+	@$(MAGE_RUN) releaseSnapshot
 
 verify:
 	@$(MAGE_RUN) verify

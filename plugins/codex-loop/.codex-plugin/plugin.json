@@ -4,10 +4,10 @@
   "description": "Codex lifecycle loop hooks for minimum-duration and rounds-based agent work.",
   "author": {
     "name": "Pedro Nauck",
-    "url": "https://github.com/pedronauck"
+    "url": "https://github.com/compozy"
   },
-  "homepage": "https://github.com/pedronauck/codex-loop",
-  "repository": "https://github.com/pedronauck/codex-loop",
+  "homepage": "https://github.com/compozy/codex-loop",
+  "repository": "https://github.com/compozy/codex-loop",
   "license": "MIT",
   "keywords": [
     "codex",
@@ -28,7 +28,7 @@
       "Read",
       "Write"
     ],
-    "websiteURL": "https://github.com/pedronauck/codex-loop",
+    "websiteURL": "https://github.com/compozy/codex-loop",
     "defaultPrompt": [
       "Install Codex Loop globally on this machine.",
       "Set up codex-loop hooks for repeated QA and long-running implementation work."

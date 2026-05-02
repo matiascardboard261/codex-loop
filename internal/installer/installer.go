@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/pedronauck/codex-loop/internal/loop"
+	"github.com/compozy/codex-loop/internal/loop"
 )
 
 var inlineHooksRE = regexp.MustCompile(`(?m)^\s*\[\[?\s*hooks(?:[.\]])`)

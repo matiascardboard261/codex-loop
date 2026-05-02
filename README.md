@@ -16,7 +16,7 @@ It is designed for release-grade QA, long-running hardening passes, and repeated
 ## Install CLI
 
 ```bash
-go install github.com/pedronauck/codex-loop/cmd/codex-loop@latest
+go install github.com/compozy/codex-loop/cmd/codex-loop@latest
 codex-loop install
 ```
 
@@ -33,7 +33,7 @@ codex-loop install
 Register this repo as a Codex plugin marketplace:
 
 ```bash
-codex plugin marketplace add github.com/pedronauck/codex-loop
+codex plugin marketplace add github.com/compozy/codex-loop
 ```
 
 For local development from this checkout:
@@ -118,6 +118,18 @@ make verify
 ```
 
 `make verify` runs formatting, vetting, linting, race-enabled tests, and build checks.
+
+Release tooling mirrors the project CI:
+
+```bash
+make release-check
+make release-snapshot
+```
+
+- `make release-check` validates `.goreleaser.yml` with the current GoReleaser v2 CLI.
+- `make release-snapshot` builds local snapshot artifacts under `dist/` without publishing, signing, or SBOM generation.
+- GitHub Actions runs `make verify` on pushes and pull requests to `main`.
+- Pushing a `v*` tag publishes a GitHub release through GoReleaser.
 
 ## Privacy
 

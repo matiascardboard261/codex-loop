@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/pedronauck/codex-loop/internal/cli"
+	"github.com/compozy/codex-loop/internal/cli"
 )
 
 func main() {

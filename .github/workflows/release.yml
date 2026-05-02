@@ -1,0 +1,121 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/release.yml"
+      - ".github/actions/**"
+      - ".goreleaser.yml"
+      - ".goreleaser.release-header.md.tmpl"
+      - ".goreleaser.release-footer.md.tmpl"
+      - "cliff.toml"
+      - "cmd/**"
+      - "internal/**"
+      - "plugins/**"
+      - "go.mod"
+      - "go.sum"
+      - "Makefile"
+      - "magefile.go"
+  workflow_dispatch:
+    inputs:
+      snapshot:
+        description: "Run a snapshot release without publishing"
+        required: true
+        default: true
+        type: boolean
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+env:
+  CGO_ENABLED: 0
+  GO_VERSION: "1.24.x"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  dry-run:
+    name: Release Dry Run
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up Go
+        uses: ./.github/actions/setup-go
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Setup release tools
+        uses: ./.github/actions/setup-release
+
+      - name: Validate release config
+        run: goreleaser check
+
+      - name: Run snapshot release
+        run: goreleaser release --snapshot --clean --skip=publish,sign
+
+      - name: Upload dry-run artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dry-run-artifacts
+          path: dist
+          if-no-files-found: ignore
+          retention-days: 7
+
+  release:
+    name: Publish Release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up Go
+        uses: ./.github/actions/setup-go
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Setup release tools
+        uses: ./.github/actions/setup-release
+
+      - name: Run verification pipeline
+        run: make verify
+        env:
+          CGO_ENABLED: 1
+
+      - name: Validate release notes templates
+        run: |
+          set -euo pipefail
+          test -s .goreleaser.release-header.md.tmpl
+          test -s .goreleaser.release-footer.md.tmpl
+
+      - name: Publish with GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: >-
+            release --clean
+            --release-header-tmpl=.goreleaser.release-header.md.tmpl
+            --release-footer-tmpl=.goreleaser.release-footer.md.tmpl
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COSIGN_EXPERIMENTAL: 1

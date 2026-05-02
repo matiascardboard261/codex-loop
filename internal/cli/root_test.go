@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pedronauck/codex-loop/internal/loop"
+	"github.com/compozy/codex-loop/internal/loop"
 )
 
 func TestVersionCommand(t *testing.T) {

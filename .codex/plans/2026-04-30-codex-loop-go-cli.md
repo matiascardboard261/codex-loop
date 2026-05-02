@@ -3,7 +3,7 @@
 Accepted on 2026-04-30 after the user asked to implement the proposed plan.
 
 ## Summary
-- Transformar o repo em um projeto open source Go usando o boilerplate de `~/dev/projects/go-devstack`, com binário público `codex-loop`, módulo `github.com/pedronauck/codex-loop`, licença MIT e verificação via `make verify`.
+- Transformar o repo em um projeto open source Go usando o boilerplate de `~/dev/projects/go-devstack`, com binário público `codex-loop`, módulo `github.com/compozy/codex-loop`, licença MIT e verificação via `make verify`.
 - Implementar o projeto como greenfield em Go: CLI Cobra, runtime dos hooks, instalador/desinstalador, status, parsing de ativação, persistência de estado e geração de prompts de continuação.
 - A v1 pública usa somente `codex-loop`; não deve mencionar, migrar ou manter compatibilidade com nomes/artefatos anteriores.
 - Manter funcionamento correto como plugin do Codex usando a estrutura oficial atual: plugin com `.codex-plugin/plugin.json`, skill em `skills/`, lifecycle config em `hooks/hooks.json`, marketplace em `.agents/plugins/marketplace.json`, e instalação via `codex plugin marketplace add`.
@@ -22,7 +22,7 @@ Accepted on 2026-04-30 after the user asked to implement the proposed plan.
 - Reestruturar o plugin:
   - criar `plugins/codex-loop` como o único bundle de plugin do projeto;
   - atualizar `.codex-plugin/plugin.json` com nome `codex-loop`, versão inicial `1.0.0`, metadata OSS, licença MIT, repository/homepage, `skills: "./skills/"` e `hooks: "./hooks/hooks.json"`;
-  - substituir o skill atual por instruções que mandam instalar o binário com `go install github.com/pedronauck/codex-loop/cmd/codex-loop@latest`, rodar `codex-loop install`, reiniciar Codex e usar o header `[[CODEX_LOOP ...]]`;
+  - substituir o skill atual por instruções que mandam instalar o binário com `go install github.com/compozy/codex-loop/cmd/codex-loop@latest`, rodar `codex-loop install`, reiniciar Codex e usar o header `[[CODEX_LOOP ...]]`;
   - criar `plugins/codex-loop/hooks/hooks.json` com `UserPromptSubmit` e `Stop` apontando para `~/.codex/codex-loop/bin/codex-loop hook ...`; o comando deve ser tolerante quando o binário ainda não existe, saindo sem bloquear até `codex-loop install` ser executado.
 - Atualizar marketplace e docs:
   - mudar `.agents/plugins/marketplace.json` para apontar `./plugins/codex-loop`;
@@ -80,8 +80,8 @@ Accepted on 2026-04-30 after the user asked to implement the proposed plan.
 ## Assumptions
 - Licença: MIT.
 - Nome público: `codex-loop`.
-- Módulo Go: `github.com/pedronauck/codex-loop`.
-- Distribuição primária da v1: `go install github.com/pedronauck/codex-loop/cmd/codex-loop@latest`.
+- Módulo Go: `github.com/compozy/codex-loop`.
+- Distribuição primária da v1: `go install github.com/compozy/codex-loop/cmd/codex-loop@latest`.
 - Plugin público da v1: `codex-loop`, sem camada de compatibilidade/migração.
 - Go baseline: manter o `go 1.24` do boilerplate, compatível com o ambiente local atual (`go1.26.1`).
 - Referências usadas para decisões de plugin/hooks: docs oficiais OpenAI Codex “Build plugins” e “Hooks”; referência Cobra atual em `pkg.go.dev/github.com/spf13/cobra`.

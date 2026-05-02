@@ -8,9 +8,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/pedronauck/codex-loop/internal/installer"
-	"github.com/pedronauck/codex-loop/internal/loop"
-	"github.com/pedronauck/codex-loop/internal/version"
+	"github.com/compozy/codex-loop/internal/installer"
+	"github.com/compozy/codex-loop/internal/loop"
+	"github.com/compozy/codex-loop/internal/version"
 )
 
 type rootOptions struct {
