@@ -1,7 +1,7 @@
 {
   "name": "codex-loop",
   "version": "1.0.0",
-  "description": "Codex lifecycle loop hooks for minimum-duration and rounds-based agent work.",
+  "description": "Codex lifecycle loop hooks for minimum-duration, rounds-based, and goal-confirmed agent work.",
   "author": {
     "name": "Pedro Nauck",
     "url": "https://github.com/compozy"
@@ -20,8 +20,8 @@
   "hooks": "./hooks/hooks.json",
   "interface": {
     "displayName": "Codex Loop",
-    "shortDescription": "Lifecycle hooks for time- or rounds-based Codex work.",
-    "longDescription": "Codex Loop keeps explicitly activated Codex tasks running until they satisfy a minimum duration or target number of deliberate rounds.",
+    "shortDescription": "Lifecycle hooks for time, rounds, or goal-confirmed Codex work.",
+    "longDescription": "Codex Loop keeps explicitly activated Codex tasks running until they satisfy a minimum duration, target number of deliberate rounds, or headless goal-confirmation verdict.",
     "developerName": "Pedro Nauck",
     "category": "Developer Tools",
     "capabilities": [

@@ -45,6 +45,10 @@ func TestExtractActivationRequiresExactlyOneLimit(t *testing.T) {
 			name:   "duplicate limiters",
 			prompt: `[[CODEX_LOOP name="qa" min="30m" rounds="3"]]` + "\nRun QA.",
 		},
+		{
+			name:   "duplicate goal limiter",
+			prompt: `[[CODEX_LOOP name="qa" rounds="3" goal="done"]]` + "\nRun QA.",
+		},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -56,6 +60,66 @@ func TestExtractActivationRequiresExactlyOneLimit(t *testing.T) {
 				t.Fatal("expected error, got nil")
 			}
 		})
+	}
+}
+
+func TestExtractActivationBuildsGoalActivation(t *testing.T) {
+	t.Parallel()
+
+	activation, ok, err := ExtractActivation(`[[CODEX_LOOP name="Goal QA" goal="ship when verified" confirm_model="gpt-5.5" confirm_reasoning_effort="xhigh"]]` + "\nRun QA.")
+	if err != nil {
+		t.Fatalf("extract activation: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected activation")
+	}
+	if activation.LimitMode != LimitModeGoal {
+		t.Fatalf("unexpected limit mode %q", activation.LimitMode)
+	}
+	if activation.GoalText != "ship when verified" {
+		t.Fatalf("unexpected goal %q", activation.GoalText)
+	}
+	if activation.ConfirmModel != "gpt-5.5" {
+		t.Fatalf("unexpected confirm model %q", activation.ConfirmModel)
+	}
+	if activation.ConfirmReasoning != "xhigh" {
+		t.Fatalf("unexpected confirm reasoning %q", activation.ConfirmReasoning)
+	}
+	if activation.TaskPrompt != "Run QA." {
+		t.Fatalf("unexpected task prompt %q", activation.TaskPrompt)
+	}
+}
+
+func TestExtractActivationAllowsEmptyGoal(t *testing.T) {
+	t.Parallel()
+
+	activation, ok, err := ExtractActivation(`[[CODEX_LOOP name="Goal QA" goal=""]]` + "\nRun QA.")
+	if err != nil {
+		t.Fatalf("extract activation: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected activation")
+	}
+	if activation.LimitMode != LimitModeGoal {
+		t.Fatalf("unexpected limit mode %q", activation.LimitMode)
+	}
+}
+
+func TestExtractActivationRejectsConfirmFieldsWithoutGoal(t *testing.T) {
+	t.Parallel()
+
+	_, _, err := ExtractActivation(`[[CODEX_LOOP name="qa" rounds="2" confirm_model="gpt-5.5"]]` + "\nRun QA.")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestExtractActivationRejectsInvalidConfirmReasoning(t *testing.T) {
+	t.Parallel()
+
+	_, _, err := ExtractActivation(`[[CODEX_LOOP name="qa" goal="" confirm_reasoning_effort="huge"]]` + "\nRun QA.")
+	if err == nil {
+		t.Fatal("expected error, got nil")
 	}
 }
 

@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	RecordVersion = 3
+	RecordVersion = 4
 	RuntimeName   = "codex-loop"
 
 	StatusActive     = "active"
@@ -24,29 +24,38 @@ type Paths struct {
 }
 
 type LoopRecord struct {
-	Version              int     `json:"version"`
-	SessionID            string  `json:"session_id"`
-	Name                 string  `json:"name"`
-	Slug                 string  `json:"slug"`
-	CWD                  string  `json:"cwd"`
-	WorkspaceRoot        string  `json:"workspace_root"`
-	StartedAt            string  `json:"started_at"`
-	TaskPrompt           string  `json:"task_prompt"`
-	ActivationPrompt     string  `json:"activation_prompt"`
-	Status               string  `json:"status"`
-	LimitMode            string  `json:"limit_mode"`
-	ContinueCount        int     `json:"continue_count"`
-	RapidStopCount       int     `json:"rapid_stop_count"`
-	EscalationUsed       bool    `json:"escalation_used"`
-	LastStopAt           *string `json:"last_stop_at"`
-	LastContinueAt       *string `json:"last_continue_at"`
-	LastAssistantMessage *string `json:"last_assistant_message"`
-	DurationText         *string `json:"duration_text"`
-	MinDurationSeconds   *int    `json:"min_duration_seconds"`
-	DeadlineAt           *string `json:"deadline_at"`
-	RoundsText           *string `json:"rounds_text"`
-	TargetRounds         *int    `json:"target_rounds"`
-	CompletedRounds      int     `json:"completed_rounds"`
+	Version              int      `json:"version"`
+	SessionID            string   `json:"session_id"`
+	Name                 string   `json:"name"`
+	Slug                 string   `json:"slug"`
+	CWD                  string   `json:"cwd"`
+	WorkspaceRoot        string   `json:"workspace_root"`
+	StartedAt            string   `json:"started_at"`
+	TaskPrompt           string   `json:"task_prompt"`
+	ActivationPrompt     string   `json:"activation_prompt"`
+	Status               string   `json:"status"`
+	LimitMode            string   `json:"limit_mode"`
+	ContinueCount        int      `json:"continue_count"`
+	RapidStopCount       int      `json:"rapid_stop_count"`
+	EscalationUsed       bool     `json:"escalation_used"`
+	LastStopAt           *string  `json:"last_stop_at"`
+	LastContinueAt       *string  `json:"last_continue_at"`
+	LastAssistantMessage *string  `json:"last_assistant_message"`
+	DurationText         *string  `json:"duration_text"`
+	MinDurationSeconds   *int     `json:"min_duration_seconds"`
+	DeadlineAt           *string  `json:"deadline_at"`
+	RoundsText           *string  `json:"rounds_text"`
+	TargetRounds         *int     `json:"target_rounds"`
+	CompletedRounds      int      `json:"completed_rounds"`
+	GoalText             *string  `json:"goal_text"`
+	ConfirmModel         *string  `json:"confirm_model"`
+	ConfirmReasoning     *string  `json:"confirm_reasoning_effort"`
+	GoalCheckCount       int      `json:"goal_check_count"`
+	LastGoalCheckAt      *string  `json:"last_goal_check_at"`
+	LastGoalOutcome      *string  `json:"last_goal_outcome"`
+	LastGoalConfidence   *float64 `json:"last_goal_confidence"`
+	LastGoalReason       *string  `json:"last_goal_reason"`
+	LastGoalError        *string  `json:"last_goal_error"`
 }
 
 type LoopFile struct {
@@ -129,6 +138,10 @@ func (p Paths) RuntimeConfigPath() string {
 	return filepath.Join(p.RuntimeRoot(), "config.toml")
 }
 
+func (p Paths) RunsLogPath() string {
+	return filepath.Join(p.RuntimeRoot(), "runs.jsonl")
+}
+
 func ResolveWorkspaceRoot(start string) (string, error) {
 	current, err := filepath.Abs(start)
 	if err != nil {
@@ -187,6 +200,19 @@ func BuildLoopRecord(sessionID string, cwd string, workspaceRoot string, activat
 		record.DurationText = &durationText
 		record.MinDurationSeconds = &minDurationSeconds
 		record.DeadlineAt = &deadlineAt
+		return record
+	}
+	if activation.LimitMode == LimitModeGoal {
+		goalText := activation.GoalText
+		record.GoalText = &goalText
+		if activation.ConfirmModel != "" {
+			confirmModel := activation.ConfirmModel
+			record.ConfirmModel = &confirmModel
+		}
+		if activation.ConfirmReasoning != "" {
+			confirmReasoning := activation.ConfirmReasoning
+			record.ConfirmReasoning = &confirmReasoning
+		}
 		return record
 	}
 
@@ -378,8 +404,11 @@ func NormalizeStatus(value string) string {
 }
 
 func ResolveLimitMode(record LoopRecord) string {
-	if record.LimitMode == LimitModeTime || record.LimitMode == LimitModeRounds {
+	if record.LimitMode == LimitModeTime || record.LimitMode == LimitModeRounds || record.LimitMode == LimitModeGoal {
 		return record.LimitMode
+	}
+	if record.GoalText != nil {
+		return LimitModeGoal
 	}
 	if record.TargetRounds != nil {
 		return LimitModeRounds

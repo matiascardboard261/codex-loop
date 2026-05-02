@@ -135,6 +135,270 @@ func TestPromptWithoutHeaderIsIgnored(t *testing.T) {
 	}
 }
 
+func TestUserPromptSubmitCreatesGoalLoopFile(t *testing.T) {
+	t.Parallel()
+
+	paths := mustPaths(t)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("create repo root: %v", err)
+	}
+
+	result, err := HandleUserPromptSubmit(paths, UserPromptPayload{
+		SessionID: "sess-1",
+		CWD:       repoRoot,
+		Prompt:    `[[CODEX_LOOP name="goal-qa" goal="verify release" confirm_model="gpt-5.5" confirm_reasoning_effort="high"]]` + "\nRun the QA task.",
+	}, fixedTime())
+	if err != nil {
+		t.Fatalf("handle user prompt submit: %v", err)
+	}
+	if result != nil {
+		t.Fatalf("expected nil hook result, got %#v", result)
+	}
+
+	loopFiles, err := IterLoopRecords(paths)
+	if err != nil {
+		t.Fatalf("iterate loops: %v", err)
+	}
+	if len(loopFiles) != 1 {
+		t.Fatalf("expected 1 loop file, got %d", len(loopFiles))
+	}
+	record := loopFiles[0].Record
+	if record.LimitMode != LimitModeGoal {
+		t.Fatalf("unexpected limit mode %q", record.LimitMode)
+	}
+	if record.GoalText == nil || *record.GoalText != "verify release" {
+		t.Fatalf("unexpected goal text %#v", record.GoalText)
+	}
+	if record.ConfirmModel == nil || *record.ConfirmModel != "gpt-5.5" {
+		t.Fatalf("unexpected confirm model %#v", record.ConfirmModel)
+	}
+	if record.ConfirmReasoning == nil || *record.ConfirmReasoning != "high" {
+		t.Fatalf("unexpected confirm reasoning %#v", record.ConfirmReasoning)
+	}
+}
+
+func TestStopGoalModeCompletesWhenConfirmed(t *testing.T) {
+	paths := mustPaths(t)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("create repo root: %v", err)
+	}
+	argsPath := filepath.Join(t.TempDir(), "args.txt")
+	stdinPath := filepath.Join(t.TempDir(), "stdin.txt")
+	fakeCodex := writeFakeCodex(t)
+	t.Setenv("FAKE_CODEX_ARGS", argsPath)
+	t.Setenv("FAKE_CODEX_STDIN", stdinPath)
+	t.Setenv("FAKE_CODEX_VERDICT", `{"completed":true,"confidence":0.98,"reason":"all work is verified","missing_work":[],"next_round_guidance":""}`)
+	writeRuntimeConfig(t, paths, `[goal]
+`+fakeGoalConfirmCommandConfig(fakeCodex)+`
+timeout_seconds = 5
+`)
+
+	start := fixedTime()
+	path := writeLoop(t, paths, "sess-1", repoRoot, `[[CODEX_LOOP name="goal-qa" goal="verify release"]]`+"\nRun the QA task.", start)
+	latest := "Done."
+	result, err := HandleStop(context.Background(), paths, StopPayload{
+		SessionID:            "sess-1",
+		CWD:                  repoRoot,
+		LastAssistantMessage: &latest,
+	}, start.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("handle stop: %v", err)
+	}
+	if result != nil {
+		t.Fatalf("expected completed goal to return nil, got %#v", result)
+	}
+	updated := readLoop(t, path)
+	if updated.Status != StatusCompleted {
+		t.Fatalf("expected completed status, got %q", updated.Status)
+	}
+	if updated.GoalCheckCount != 1 {
+		t.Fatalf("expected goal check count 1, got %d", updated.GoalCheckCount)
+	}
+	assertContains(t, readText(t, argsPath), "--model\ngpt-5.5")
+	assertContains(t, readText(t, argsPath), `model_reasoning_effort="high"`)
+	assertContains(t, readText(t, argsPath), "--yolo")
+	assertNotContains(t, readText(t, stdinPath), ActivationPrefix)
+	assertContains(t, readText(t, paths.RunsLogPath()), `"outcome":"completed"`)
+}
+
+func TestStopGoalModeContinuesWhenIncompleteAndRunsPreLoopContinue(t *testing.T) {
+	paths := mustPaths(t)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("create repo root: %v", err)
+	}
+	fakeCodex := writeFakeCodex(t)
+	t.Setenv("FAKE_CODEX_ARGS", filepath.Join(t.TempDir(), "args.txt"))
+	t.Setenv("FAKE_CODEX_STDIN", filepath.Join(t.TempDir(), "stdin.txt"))
+	t.Setenv("FAKE_CODEX_VERDICT", `{"completed":false,"confidence":0.35,"reason":"tests are missing","missing_work":["run integration tests"],"next_round_guidance":"add real verification"}`)
+	writeRuntimeConfig(t, paths, `[goal]
+`+fakeGoalConfirmCommandConfig(fakeCodex)+`
+timeout_seconds = 5
+
+[pre_loop_continue]
+command = "/bin/sh -c 'printf pre-loop-context'"
+`)
+
+	start := fixedTime()
+	path := writeLoop(t, paths, "sess-1", repoRoot, `[[CODEX_LOOP name="goal-qa" goal="verify release"]]`+"\nRun the QA task.", start)
+	result, err := HandleStop(context.Background(), paths, StopPayload{
+		SessionID: "sess-1",
+		CWD:       repoRoot,
+	}, start.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("handle stop: %v", err)
+	}
+	if result == nil || result["decision"] != "block" {
+		t.Fatalf("expected block result, got %#v", result)
+	}
+	reason := result["reason"].(string)
+	assertContains(t, reason, "Goal confirmation verdict:")
+	assertContains(t, reason, "run integration tests")
+	assertContains(t, reason, "pre_loop_continue output:")
+	assertContains(t, reason, "pre-loop-context")
+	updated := readLoop(t, path)
+	if updated.Status != StatusActive {
+		t.Fatalf("expected active status, got %q", updated.Status)
+	}
+	if updated.ContinueCount != 1 {
+		t.Fatalf("expected continue count 1, got %d", updated.ContinueCount)
+	}
+	assertContains(t, readText(t, paths.RunsLogPath()), `"continuation_emitted":true`)
+	assertContains(t, readText(t, paths.RunsLogPath()), `"pre_loop_continue_active":true`)
+}
+
+func TestStopGoalModeContinuesOnConfirmationFailure(t *testing.T) {
+	paths := mustPaths(t)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("create repo root: %v", err)
+	}
+	fakeCodex := writeFakeCodex(t)
+	t.Setenv("FAKE_CODEX_ARGS", filepath.Join(t.TempDir(), "args.txt"))
+	t.Setenv("FAKE_CODEX_STDIN", filepath.Join(t.TempDir(), "stdin.txt"))
+	t.Setenv("FAKE_CODEX_EXIT", "7")
+	t.Setenv("FAKE_CODEX_VERDICT", `{"completed":false,"confidence":0,"reason":"not used","missing_work":[],"next_round_guidance":""}`)
+	writeRuntimeConfig(t, paths, `[goal]
+`+fakeGoalConfirmCommandConfig(fakeCodex)+`
+timeout_seconds = 5
+`)
+
+	start := fixedTime()
+	writeLoop(t, paths, "sess-1", repoRoot, `[[CODEX_LOOP name="goal-qa" goal="verify release"]]`+"\nRun the QA task.", start)
+	result, err := HandleStop(context.Background(), paths, StopPayload{SessionID: "sess-1", CWD: repoRoot}, start.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("handle stop: %v", err)
+	}
+	if result == nil || result["decision"] != "block" {
+		t.Fatalf("expected continuation, got %#v", result)
+	}
+	reason := result["reason"].(string)
+	assertContains(t, reason, "Goal confirmation warning:")
+	assertContains(t, reason, "exit status 7")
+	assertContains(t, readText(t, paths.RunsLogPath()), `"outcome":"error"`)
+}
+
+func TestStopGoalModeUsesPayloadModelWhenConfigBlankAndOmitsBlankReasoning(t *testing.T) {
+	paths := mustPaths(t)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("create repo root: %v", err)
+	}
+	argsPath := filepath.Join(t.TempDir(), "args.txt")
+	fakeCodex := writeFakeCodex(t)
+	t.Setenv("FAKE_CODEX_ARGS", argsPath)
+	t.Setenv("FAKE_CODEX_STDIN", filepath.Join(t.TempDir(), "stdin.txt"))
+	t.Setenv("FAKE_CODEX_VERDICT", `{"completed":false,"confidence":0.5,"reason":"still checking","missing_work":["more evidence"],"next_round_guidance":"continue"}`)
+	writeRuntimeConfig(t, paths, `[goal]
+confirm_model = ""
+confirm_reasoning_effort = ""
+`+fakeGoalConfirmCommandConfig(fakeCodex)+`
+timeout_seconds = 5
+`)
+
+	start := fixedTime()
+	writeLoop(t, paths, "sess-1", repoRoot, `[[CODEX_LOOP name="goal-qa" goal="verify release"]]`+"\nRun the QA task.", start)
+	_, err := HandleStop(context.Background(), paths, StopPayload{
+		SessionID: "sess-1",
+		CWD:       repoRoot,
+		Model:     "payload-model",
+	}, start.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("handle stop: %v", err)
+	}
+	args := readText(t, argsPath)
+	assertContains(t, args, "--model\npayload-model")
+	assertNotContains(t, args, "model_reasoning_effort")
+}
+
+func TestStopGoalModeTimesOutConfirmation(t *testing.T) {
+	paths := mustPaths(t)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("create repo root: %v", err)
+	}
+	fakeCodex := writeFakeCodex(t)
+	t.Setenv("FAKE_CODEX_ARGS", filepath.Join(t.TempDir(), "args.txt"))
+	t.Setenv("FAKE_CODEX_STDIN", filepath.Join(t.TempDir(), "stdin.txt"))
+	t.Setenv("FAKE_CODEX_SLEEP", "2")
+	t.Setenv("FAKE_CODEX_VERDICT", `{"completed":true,"confidence":1,"reason":"late","missing_work":[],"next_round_guidance":""}`)
+	writeRuntimeConfig(t, paths, `[goal]
+`+fakeGoalConfirmCommandConfig(fakeCodex)+`
+timeout_seconds = 1
+`)
+
+	start := fixedTime()
+	writeLoop(t, paths, "sess-1", repoRoot, `[[CODEX_LOOP name="goal-qa" goal="verify release"]]`+"\nRun the QA task.", start)
+	result, err := HandleStop(context.Background(), paths, StopPayload{SessionID: "sess-1", CWD: repoRoot}, start.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("handle stop: %v", err)
+	}
+	if result == nil || result["decision"] != "block" {
+		t.Fatalf("expected continuation, got %#v", result)
+	}
+	assertContains(t, result["reason"].(string), "timed out")
+	assertContains(t, readText(t, paths.RunsLogPath()), `"outcome":"timeout"`)
+}
+
+func TestStopGoalModeCustomCommandCanReturnVerdictOnStdout(t *testing.T) {
+	paths := mustPaths(t)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("create repo root: %v", err)
+	}
+	promptArgPath := filepath.Join(t.TempDir(), "prompt-arg.txt")
+	promptFileCopyPath := filepath.Join(t.TempDir(), "prompt-file.txt")
+	stdinPath := filepath.Join(t.TempDir(), "stdin.txt")
+	fakeConfirm := writeFakeStdoutConfirm(t)
+	t.Setenv("FAKE_CONFIRM_PROMPT_ARG", promptArgPath)
+	t.Setenv("FAKE_CONFIRM_PROMPT_FILE_COPY", promptFileCopyPath)
+	t.Setenv("FAKE_CONFIRM_STDIN", stdinPath)
+	writeRuntimeConfig(t, paths, `[goal]
+confirm_command = "`+fakeConfirm+` $PROMPT $PROMPT_FILE"
+timeout_seconds = 5
+`)
+
+	start := fixedTime()
+	path := writeLoop(t, paths, "sess-1", repoRoot, `[[CODEX_LOOP name="goal-qa" goal="verify release"]]`+"\nRun the QA task.", start)
+	result, err := HandleStop(context.Background(), paths, StopPayload{SessionID: "sess-1", CWD: repoRoot}, start.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("handle stop: %v", err)
+	}
+	if result != nil {
+		t.Fatalf("expected stdout verdict to complete goal, got %#v", result)
+	}
+	updated := readLoop(t, path)
+	if updated.Status != StatusCompleted {
+		t.Fatalf("expected completed status, got %q", updated.Status)
+	}
+	assertContains(t, readText(t, promptArgPath), "Original task:")
+	assertContains(t, readText(t, promptFileCopyPath), "Run the QA task.")
+	assertContains(t, readText(t, stdinPath), "Decision rules:")
+	assertContains(t, readText(t, paths.RunsLogPath()), `"outcome":"completed"`)
+}
+
 func TestStopContinuesBeforeDeadlineWithOptionalGuidance(t *testing.T) {
 	t.Parallel()
 
@@ -315,8 +579,7 @@ func TestStopRunsPreLoopContinueWithSessionCWDAndJSONInput(t *testing.T) {
 		t.Fatalf("create session cwd: %v", err)
 	}
 	writeRuntimeConfig(t, paths, `[pre_loop_continue]
-command = "/bin/sh"
-args = ["-c", "printf 'cwd=%s\n' \"$PWD\"; cat"]
+command = '''/bin/sh -c "printf 'cwd=%s\n' \"$PWD\"; printf 'file='; cat \"$1\"; printf '\nstdin='; cat" sh $INPUT_FILE'''
 `)
 
 	start := fixedTime()
@@ -333,7 +596,13 @@ args = ["-c", "printf 'cwd=%s\n' \"$PWD\"; cat"]
 
 	reason := result["reason"].(string)
 	assertContains(t, reason, "pre_loop_continue output:")
-	assertContains(t, reason, "cwd="+sessionCWD)
+	resolvedSessionCWD, err := filepath.EvalSymlinks(sessionCWD)
+	if err != nil {
+		t.Fatalf("resolve session cwd symlinks: %v", err)
+	}
+	assertContains(t, reason, "cwd="+resolvedSessionCWD)
+	assertContains(t, reason, "file=")
+	assertContains(t, reason, "stdin=")
 	assertContains(t, reason, `"event_name":"pre_loop_continue"`)
 	assertContains(t, reason, `"session_id":"sess-1"`)
 }
@@ -376,8 +645,7 @@ func TestStopPreLoopContinueFailureContinuesWithWarning(t *testing.T) {
 		t.Fatalf("create repo root: %v", err)
 	}
 	writeRuntimeConfig(t, paths, `[pre_loop_continue]
-command = "/bin/sh"
-args = ["-c", "printf secret >&2; exit 7"]
+command = "/bin/sh -c 'printf secret >&2; exit 7'"
 `)
 
 	start := fixedTime()
@@ -408,8 +676,7 @@ func TestStopPreLoopContinueTimeoutContinuesWithWarning(t *testing.T) {
 		t.Fatalf("create repo root: %v", err)
 	}
 	writeRuntimeConfig(t, paths, `[pre_loop_continue]
-command = "/bin/sh"
-args = ["-c", "sleep 5"]
+command = "/bin/sh -c 'sleep 5'"
 timeout_seconds = 1
 `)
 
@@ -437,8 +704,7 @@ func TestStopPreLoopContinueTruncatesOutput(t *testing.T) {
 		t.Fatalf("create repo root: %v", err)
 	}
 	writeRuntimeConfig(t, paths, `[pre_loop_continue]
-command = "/bin/sh"
-args = ["-c", "printf abcdef"]
+command = "/bin/sh -c 'printf abcdef'"
 max_output_bytes = 4
 `)
 
@@ -467,8 +733,7 @@ func TestStopPreLoopContinueInvalidCWDContinuesWithWarning(t *testing.T) {
 		t.Fatalf("create repo root: %v", err)
 	}
 	writeRuntimeConfig(t, paths, `[pre_loop_continue]
-command = "/bin/sh"
-args = ["-c", "printf should-not-run"]
+command = "/bin/sh -c 'printf should-not-run'"
 cwd = "elsewhere"
 `)
 
@@ -498,8 +763,7 @@ func TestStopPreLoopContinueDoesNotRunWhenLoopCompletes(t *testing.T) {
 		t.Fatalf("create repo root: %v", err)
 	}
 	writeRuntimeConfig(t, paths, `[pre_loop_continue]
-command = "/bin/sh"
-args = ["-c", "touch \"$1\"", "sh", "`+marker+`"]
+command = "/bin/sh -c 'touch \"$1\"' sh `+marker+`"
 `)
 
 	start := fixedTime()
@@ -542,6 +806,72 @@ func writeRuntimeConfig(t *testing.T, paths Paths, content string) {
 	}
 }
 
+func fakeGoalConfirmCommandConfig(fakeCodex string) string {
+	return `confirm_command = "` + fakeCodex + ` exec --yolo --output-schema $SCHEMA_PATH --output-last-message $OUTPUT_PATH $MODEL_ARGV $REASONING_ARGV --skip-git-repo-check -"`
+}
+
+func writeFakeCodex(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "codex")
+	script := `#!/bin/sh
+set -eu
+out=""
+prev=""
+if [ -n "${FAKE_CODEX_ARGS:-}" ]; then
+  : > "$FAKE_CODEX_ARGS"
+fi
+for arg in "$@"; do
+  if [ -n "${FAKE_CODEX_ARGS:-}" ]; then
+    printf '%s\n' "$arg" >> "$FAKE_CODEX_ARGS"
+  fi
+  if [ "$prev" = "--output-last-message" ]; then
+    out="$arg"
+  fi
+  prev="$arg"
+done
+if [ -n "${FAKE_CODEX_STDIN:-}" ]; then
+  cat > "$FAKE_CODEX_STDIN"
+else
+  cat >/dev/null
+fi
+if [ -n "${FAKE_CODEX_SLEEP:-}" ]; then
+  sleep "$FAKE_CODEX_SLEEP"
+fi
+if [ -n "$out" ]; then
+  printf '%s\n' "${FAKE_CODEX_VERDICT:-}" > "$out"
+fi
+exit "${FAKE_CODEX_EXIT:-0}"
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake codex: %v", err)
+	}
+	return path
+}
+
+func writeFakeStdoutConfirm(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "confirm")
+	script := `#!/bin/sh
+set -eu
+if [ -n "${FAKE_CONFIRM_PROMPT_ARG:-}" ]; then
+  printf '%s' "${1:-}" > "$FAKE_CONFIRM_PROMPT_ARG"
+fi
+if [ -n "${FAKE_CONFIRM_PROMPT_FILE_COPY:-}" ]; then
+  cat "${2:-/dev/null}" > "$FAKE_CONFIRM_PROMPT_FILE_COPY"
+fi
+if [ -n "${FAKE_CONFIRM_STDIN:-}" ]; then
+  cat > "$FAKE_CONFIRM_STDIN"
+else
+  cat >/dev/null
+fi
+printf '%s\n' '{"completed":true,"confidence":0.92,"reason":"stdout verdict","missing_work":[],"next_round_guidance":""}'
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake stdout confirm: %v", err)
+	}
+	return path
+}
+
 func writeLoop(t *testing.T, paths Paths, sessionID string, repoRoot string, prompt string, now time.Time) string {
 	t.Helper()
 	activation, ok, err := ExtractActivation(prompt)
@@ -570,6 +900,15 @@ func readLoop(t *testing.T, path string) LoopRecord {
 		t.Fatalf("decode loop: %v", err)
 	}
 	return record
+}
+
+func readText(t *testing.T, path string) string {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(content)
 }
 
 func assertContains(t *testing.T, haystack string, needle string) {

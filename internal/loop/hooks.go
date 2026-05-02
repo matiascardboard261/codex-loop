@@ -23,6 +23,7 @@ type UserPromptPayload struct {
 type StopPayload struct {
 	SessionID            string  `json:"session_id"`
 	CWD                  string  `json:"cwd"`
+	Model                string  `json:"model"`
 	LastAssistantMessage *string `json:"last_assistant_message"`
 }
 
@@ -106,6 +107,7 @@ func HandleStop(ctx context.Context, paths Paths, payload StopPayload, now time.
 
 	limitMode := ResolveLimitMode(record)
 	var remainingSeconds *int
+	var goalResult *goalCheckResult
 	if limitMode == LimitModeTime {
 		deadlineAt, err := ParseISO8601(record.DeadlineAt)
 		if err != nil {
@@ -123,7 +125,7 @@ func HandleStop(ctx context.Context, paths Paths, payload StopPayload, now time.
 		}
 		remaining := max(0, int(deadlineAt.Sub(now).Seconds()))
 		remainingSeconds = &remaining
-	} else {
+	} else if limitMode == LimitModeRounds {
 		targetRounds := 0
 		if record.TargetRounds != nil {
 			targetRounds = *record.TargetRounds
@@ -139,6 +141,41 @@ func HandleStop(ctx context.Context, paths Paths, payload StopPayload, now time.
 			}
 			return nil, nil
 		}
+	} else if limitMode == LimitModeGoal {
+		runtimeConfig := LoadRuntimeConfig(paths)
+		record.GoalCheckCount++
+		checkedAt := ISOFormat(now)
+		record.LastGoalCheckAt = &checkedAt
+		record.LastGoalOutcome = nil
+		record.LastGoalConfidence = nil
+		record.LastGoalReason = nil
+		record.LastGoalError = nil
+		checkResult := runGoalCheck(ctx, paths, runtimeConfig.Goal, payload, record, now)
+		goalResult = &checkResult
+		outcome := checkResult.Outcome
+		record.LastGoalOutcome = &outcome
+		confidence := checkResult.Verdict.Confidence
+		record.LastGoalConfidence = &confidence
+		reason := strings.TrimSpace(checkResult.Verdict.Reason)
+		if reason != "" {
+			record.LastGoalReason = &reason
+		}
+		errorSummary := strings.TrimSpace(checkResult.ErrorSummary)
+		if errorSummary != "" {
+			record.LastGoalError = &errorSummary
+		}
+		if checkResult.Outcome == GoalCheckOutcomeCompleted {
+			record.Status = StatusCompleted
+			if err := ReplaceLoopFile(active.Path, record); err != nil {
+				return StopWarning(fmt.Sprintf("Codex loop stop hook failed: %v", err)), nil
+			}
+			if err := AppendGoalCheckLog(paths, active.Path, record, checkResult, false, false, now); err != nil {
+				return StopWarning(fmt.Sprintf("Codex loop goal log failed: %v", err)), nil
+			}
+			return nil, nil
+		}
+	} else {
+		return StopWarning(fmt.Sprintf("Codex loop stop hook failed: unsupported limit mode %q", limitMode)), nil
 	}
 
 	rapidCount := 0
@@ -151,6 +188,11 @@ func HandleStop(ctx context.Context, paths Paths, payload StopPayload, now time.
 		record.Status = StatusCutShort
 		if err := ReplaceLoopFile(active.Path, record); err != nil {
 			return StopWarning(fmt.Sprintf("Codex loop stop hook failed: %v", err)), nil
+		}
+		if goalResult != nil {
+			if err := AppendGoalCheckLog(paths, active.Path, record, *goalResult, false, false, now); err != nil {
+				return StopWarning(fmt.Sprintf("Codex loop stopped after repeated rapid completions, but goal logging failed: %v", err)), nil
+			}
 		}
 		return StopWarning("Codex loop stopped after repeated rapid completions. Review the latest result manually before reactivating the loop."), nil
 	}
@@ -168,11 +210,99 @@ func HandleStop(ctx context.Context, paths Paths, payload StopPayload, now time.
 	}
 
 	reason := ContinuationReason(paths, record, remainingSeconds, aggressive)
+	if goalResult != nil {
+		reason = GoalContinuationReason(paths, record, *goalResult, aggressive)
+	}
 	reason = appendPreLoopContinue(ctx, paths, payload, record, remainingSeconds, aggressive, reason, now)
+	if goalResult != nil {
+		runtimeConfig := LoadRuntimeConfig(paths)
+		preLoopActive := strings.TrimSpace(runtimeConfig.PreLoopContinue.Command) != ""
+		if err := AppendGoalCheckLog(paths, active.Path, record, *goalResult, true, preLoopActive, now); err != nil {
+			reason = strings.TrimSpace(reason + "\n\ncodex-loop logging warning:\n" + err.Error())
+		}
+	}
 	return HookResult{
 		"decision": "block",
 		"reason":   reason,
 	}, nil
+}
+
+func GoalContinuationReason(paths Paths, record LoopRecord, result goalCheckResult, aggressive bool) string {
+	workspaceRoot := record.WorkspaceRoot
+	if workspaceRoot == "" {
+		workspaceRoot = record.CWD
+	}
+	if workspaceRoot == "" {
+		workspaceRoot = "."
+	}
+	absWorkspaceRoot, err := filepath.Abs(workspaceRoot)
+	if err == nil {
+		workspaceRoot = absWorkspaceRoot
+	}
+	continuationConfig := ResolveOptionalContinuationConfig(paths, workspaceRoot)
+	originalTask := strings.TrimSpace(record.TaskPrompt)
+	if originalTask == "" {
+		originalTask = strings.TrimSpace(record.ActivationPrompt)
+	}
+	goalText := ""
+	if record.GoalText != nil {
+		goalText = strings.TrimSpace(*record.GoalText)
+	}
+	latestMessage := ""
+	if record.LastAssistantMessage != nil {
+		latestMessage = strings.TrimSpace(*record.LastAssistantMessage)
+	}
+
+	lines := []string{
+		"Continue the active codex-loop goal task.",
+		"The independent goal confirmation pass did not confirm completion.",
+	}
+	if result.Warning != "" {
+		lines = append(lines, "", "Goal confirmation warning:", result.Warning)
+	} else {
+		lines = append(lines,
+			"",
+			"Goal confirmation verdict:",
+			fmt.Sprintf("- outcome: %s", result.Outcome),
+			fmt.Sprintf("- confidence: %.2f", result.Verdict.Confidence),
+			fmt.Sprintf("- reason: %s", strings.TrimSpace(result.Verdict.Reason)),
+		)
+		if len(result.Verdict.MissingWork) > 0 {
+			lines = append(lines, "- missing work:")
+			for _, item := range result.Verdict.MissingWork {
+				item = strings.TrimSpace(item)
+				if item != "" {
+					lines = append(lines, "  - "+item)
+				}
+			}
+		}
+		if guidance := strings.TrimSpace(result.Verdict.NextRoundGuidance); guidance != "" {
+			lines = append(lines, "- next round guidance: "+guidance)
+		}
+	}
+	if aggressive {
+		lines = append(lines, "", "Several turns have ended too quickly. Broaden the scope materially before stopping again.")
+	}
+	lines = append(lines,
+		"",
+		"Before stopping again, complete the missing work and gather concrete validation evidence.",
+	)
+	if continuationConfig.SkillName != "" && continuationConfig.SkillPath != "" {
+		lines = append(lines, fmt.Sprintf("Use the %s skill at %s.", continuationConfig.SkillName, continuationConfig.SkillPath))
+	}
+	if continuationConfig.ExtraGuidance != "" {
+		lines = append(lines, "", "Additional configured guidance:", continuationConfig.ExtraGuidance)
+	}
+	if goalText != "" {
+		lines = append(lines, "", "Additional goal:", goalText)
+	}
+	if originalTask != "" {
+		lines = append(lines, "", "Original task:", originalTask)
+	}
+	if latestMessage != "" {
+		lines = append(lines, "", "Latest assistant message before this continuation:", latestMessage)
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 func ContinuationReason(paths Paths, record LoopRecord, remainingSeconds *int, aggressive bool) string {

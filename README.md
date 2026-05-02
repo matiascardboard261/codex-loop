@@ -1,19 +1,42 @@
-# codex-loop
+<div align="center">
+  <h1>Codex Loop</h1>
+  <p><strong>Keep Codex tasks running until they actually finish — by time, rounds, or independently confirmed goal.</strong></p>
+  <p>
+    <a href="https://github.com/compozy/codex-loop/actions/workflows/ci.yml">
+      <img src="https://github.com/compozy/codex-loop/actions/workflows/ci.yml/badge.svg" alt="CI">
+    </a>
+    <a href="https://pkg.go.dev/github.com/compozy/codex-loop">
+      <img src="https://pkg.go.dev/badge/github.com/compozy/codex-loop.svg" alt="Go Reference">
+    </a>
+    <a href="https://goreportcard.com/report/github.com/compozy/codex-loop">
+      <img src="https://goreportcard.com/badge/github.com/compozy/codex-loop" alt="Go Report Card">
+    </a>
+    <a href="LICENSE">
+      <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT">
+    </a>
+    <a href="https://github.com/compozy/codex-loop/releases">
+      <img src="https://img.shields.io/github/v/release/compozy/codex-loop?include_prereleases" alt="Release">
+    </a>
+  </p>
+</div>
 
-`codex-loop` is a local-first Codex CLI and plugin that keeps explicitly activated Codex tasks running until they satisfy either a minimum duration or a target number of deliberate rounds.
+`codex-loop` is a local-first Codex CLI and plugin that keeps explicitly activated Codex tasks running until they satisfy a minimum duration, a target number of deliberate rounds, or an independently confirmed goal.
 
 It is designed for release-grade QA, long-running hardening passes, and repeated review loops where stopping after the first apparently complete answer is not enough.
 
-## What It Does
+## ✨ Highlights
 
-- Activates only from a structured prompt header on the first line.
-- Supports time limits such as `min="6h"` and round limits such as `rounds="3"`.
-- Persists loop state under `~/.codex/codex-loop/loops/`.
-- Defines Codex lifecycle hooks in the plugin bundle and mirrors managed registrations into `~/.codex/hooks.json` during install.
-- Runs as a Go CLI with no Python runtime dependency.
-- Stores all state locally in the user's Codex home directory.
+- **Three loop modes.** Pick the limiter that fits the work: minimum duration (`min="6h"`), deliberate round count (`rounds="3"`), or independently confirmed goal (`goal="ship only after verification"`).
+- **Activation by header, not flag.** Loops only start when the prompt's first line contains a structured `[[CODEX_LOOP ...]]` header, so day-to-day Codex use is untouched.
+- **Independent goal confirmation.** Goal loops invoke a configurable headless `codex exec` reviewer with structured-output verdicts before deciding whether to continue.
+- **Pre-continuation context hook.** `pre_loop_continue` runs right before each automatic continuation so the next prompt can carry fresh local context — test summaries, changed files, build status, custom checklists.
+- **Codex lifecycle integration.** Ships as a Codex plugin, contributing `UserPromptSubmit` and `Stop` hooks, and mirrors managed registrations into `~/.codex/hooks.json` for current Codex builds.
+- **Local-first state.** Loop state lives under `~/.codex/codex-loop/`, isolated by Codex `session_id`. Compact verdict metadata lands in `~/.codex/codex-loop/runs.jsonl`.
+- **Single Go binary.** No Python runtime, no daemon, no network calls from `codex-loop` itself.
 
-## Install CLI
+## 📦 Installation
+
+#### Go
 
 ```bash
 go install github.com/compozy/codex-loop/cmd/codex-loop@latest
@@ -28,7 +51,7 @@ codex-loop install
 - `~/.codex/hooks.json` with managed `UserPromptSubmit` and `Stop` hook registrations
 - `~/.codex/config.toml` with `features.codex_hooks = true`
 
-## Install Plugin
+#### Codex Plugin
 
 Register this repo as a Codex plugin marketplace:
 
@@ -46,34 +69,52 @@ Then restart Codex, open the plugin directory, and install `codex-loop` from the
 
 The plugin contributes lifecycle hooks from `plugins/codex-loop/hooks/hooks.json`. `codex-loop install` mirrors the same managed hook commands into `~/.codex/hooks.json` so current Codex builds execute them reliably while preserving unrelated user hooks.
 
-## Activation
+## 🚀 Activation
 
-The activation header must be the first line of the prompt.
+The activation header must be the first line of the prompt. The task prompt starts on the line after the header.
 
-Minimum-duration loop:
+#### Minimum-duration loop
 
 ```text
 [[CODEX_LOOP name="release-stress-qa" min="6h"]]
 Run release-grade QA for this repository and keep expanding scope until the minimum duration is met.
 ```
 
-Rounds-based loop:
+#### Rounds-based loop
 
 ```text
 [[CODEX_LOOP name="release-stress-qa" rounds="3"]]
 Run three deliberate QA passes for this repository and treat each stop as the end of one round.
 ```
 
-Rules:
+#### Goal-based loop
 
-- The task prompt starts on the line after the header.
-- `name="..."` is required.
-- Exactly one limiter is required: `min="..."` or `rounds="..."`.
-- `rounds` must be a positive integer.
-- Duration parsing accepts forms such as `30m`, `30min`, `1h 30m`, `2 hours`, and `45sec`.
-- Loop state is isolated by Codex `session_id`.
+```text
+[[CODEX_LOOP name="release-stress-qa" goal="ship only after real verification"]]
+Run release-grade QA for this repository and keep going until the work is actually complete.
+```
 
-## Commands
+#### Goal-based loop with custom confirmation model
+
+```text
+[[CODEX_LOOP name="release-stress-qa" goal="ship only after real verification" confirm_model="gpt-5.5" confirm_reasoning_effort="xhigh"]]
+Run release-grade QA for this repository and keep going until the work is actually complete.
+```
+
+#### Header rules
+
+| Field                       | Required                | Notes                                                                       |
+| --------------------------- | ----------------------- | --------------------------------------------------------------------------- |
+| `name`                      | yes                     | Loop identifier                                                             |
+| `min`                       | one of                  | Duration: `30m`, `30min`, `1h 30m`, `2 hours`, `45sec`, etc.                |
+| `rounds`                    | one of                  | Positive integer                                                            |
+| `goal`                      | one of                  | Free-form verification goal; `goal=""` reuses the task prompt as the goal   |
+| `confirm_model`             | only with `goal`        | Model for the goal confirmation run                                         |
+| `confirm_reasoning_effort`  | only with `goal`        | One of `minimal`, `low`, `medium`, `high`, `xhigh`                          |
+
+Loop state is isolated by Codex `session_id`. Exactly one limiter — `min`, `rounds`, or `goal` — is required.
+
+## 🧰 Commands
 
 ```bash
 codex-loop install
@@ -87,7 +128,7 @@ codex-loop version
 
 `status` prints JSON. By default it shows only active loops; use `--all` to include completed, superseded, and cut-short loops.
 
-## Continuation Customization
+## ⚙️ Continuation Customization
 
 `~/.codex/codex-loop/config.toml` supports:
 
@@ -96,9 +137,18 @@ optional_skill_name = ""
 optional_skill_path = ""
 extra_continuation_guidance = ""
 
+[hooks]
+stop_timeout_seconds = 2700
+
+[goal]
+confirm_model = "gpt-5.5"
+confirm_reasoning_effort = "high"
+confirm_command = "codex exec --cd $WORKSPACE_ROOT --ephemeral --yolo --output-schema $SCHEMA_PATH --output-last-message $OUTPUT_PATH $MODEL_ARGV $REASONING_ARGV --skip-git-repo-check -"
+timeout_seconds = 2400
+max_output_bytes = 12000
+
 [pre_loop_continue]
 command = ""
-args = []
 cwd = "session_cwd"
 timeout_seconds = 60
 max_output_bytes = 12000
@@ -107,37 +157,69 @@ max_output_bytes = 12000
 - `optional_skill_name` and `optional_skill_path` are used only when the path resolves inside the active workspace.
 - `optional_skill_path` may point to a skill directory or directly to `SKILL.md`.
 - `extra_continuation_guidance` appends extra text to every automatic continuation.
+- `hooks.stop_timeout_seconds` controls the managed Codex `Stop` hook timeout written by `codex-loop install`; rerun `codex-loop install` and restart Codex after changing it.
 
-### `pre_loop_continue`
+### 🎯 Goal Confirmation
 
-`pre_loop_continue` is a codex-loop runtime hook that runs inside the managed `Stop` hook, immediately before codex-loop asks Codex to continue the active loop. It is not a separate Codex lifecycle hook, which matters because independent Codex `Stop` hooks may run concurrently and cannot guarantee ordering.
+Goal loops run a configurable headless confirmation command inside the `Stop` hook before deciding whether to continue. The default confirmation run uses `codex exec --yolo`, `gpt-5.5`, and `model_reasoning_effort = "high"`. Model and reasoning are separate settings; use `confirm_model = "gpt-5.5"` plus `confirm_reasoning_effort = "xhigh"` rather than a combined model string. Codex documents `--yolo` as full access without sandboxing or approvals; use a custom `confirm_command` when you need a different safety profile or runner.
+
+**Runtime behavior:**
+
+- `confirm_command` is a shell-like string parsed to argv and executed without an implicit shell.
+- Placeholder values are shell-quoted before parsing so injected values remain literal arguments.
+- The default command runs with `--yolo`, `--ephemeral`, `--output-schema`, and `--output-last-message`.
+- If the confirmation verdict is complete, codex-loop marks the loop completed and emits no continuation prompt.
+- If the verdict is incomplete, invalid, timed out, or the command fails, codex-loop continues with a warning and keeps the loop active.
+- `goal.timeout_seconds` controls the nested confirmation timeout and is normalized to leave time before the outer Stop hook timeout.
+- `goal.max_output_bytes` caps captured confirmation output used for diagnostics.
+- Each confirmation attempt appends compact metadata to `~/.codex/codex-loop/runs.jsonl`.
+
+**Goal command variables:**
+
+- `$PROMPT`, `$PROMPT_FILE`, `$SCHEMA_PATH`, and `$OUTPUT_PATH` expose the reviewer prompt and structured-output files.
+- `$MODEL_ARGV` expands to `--model <model>` when a model is configured; `$REASONING_ARGV` expands to `--config model_reasoning_effort="<effort>"` when reasoning is configured.
+- `$MODEL`, `$REASONING_EFFORT`, `$WORKSPACE_ROOT`, `$CWD`, `$SESSION_ID`, `$LOOP_NAME`, `$LOOP_SLUG`, `$RUNS_LOG_PATH`, and `$CODEX_HOME` are also available.
+- The same values are exported with the `CODEX_LOOP_CONFIRM_` prefix.
+
+**Custom runner example:**
+
+```toml
+[goal]
+confirm_model = "opus"
+confirm_reasoning_effort = ""
+confirm_command = "compozy exec --ide claude --model $MODEL $PROMPT"
+```
+
+### 🪝 `pre_loop_continue`
+
+`pre_loop_continue` is a codex-loop runtime hook that runs inside the managed `Stop` hook, immediately before codex-loop asks Codex to continue the active loop. For goal loops, it runs only after goal confirmation decides another round is needed. It is not a separate Codex lifecycle hook, which matters because independent Codex `Stop` hooks may run concurrently and cannot guarantee ordering.
 
 Use it when the next continuation prompt should include fresh local context computed at stop time, such as a test summary, changed-file summary, issue tracker snapshot, custom QA checklist, or local build status.
 
-Runtime behavior:
+**Runtime behavior:**
 
 - It runs only when codex-loop has decided to continue the task.
 - It does not run when there is no active loop, when the loop has completed, or when codex-loop cuts the loop short.
-- `command` and `args` execute without an implicit shell. Point `command` at a script if you need shell features such as pipes or redirects.
+- `command` is a shell-like string parsed to argv and executed without an implicit shell. Point it at a script, or explicitly use `bash -lc '...'`, if you need shell features such as pipes or redirects.
 - `cwd = "session_cwd"` runs from the same directory Codex reported in the `Stop` hook payload. This is the default.
 - `cwd = "workspace_root"` runs from the root codex-loop resolved from `.git` or `.codex`.
 - The command receives structured JSON on stdin.
+- The same JSON is available through `$INPUT_JSON` and `$INPUT_FILE`.
 - Only stdout is appended to the next continuation prompt under `pre_loop_continue output:`.
 - Stderr is not injected into the prompt. Failures and timeouts keep the loop running and append a short `pre_loop_continue warning:` instead.
 - `max_output_bytes` caps captured stdout before prompt injection.
 
-Example config:
+**Example config:**
 
 ```toml
 [pre_loop_continue]
-command = ".codex/scripts/loop-context.sh"
-args = ["--format", "markdown"]
+command = ".codex/scripts/loop-context.sh --format markdown --input $INPUT_FILE"
 cwd = "session_cwd"
 timeout_seconds = 30
 max_output_bytes = 8000
 ```
 
-Example script:
+**Example script:**
 
 ```bash
 #!/usr/bin/env bash
@@ -163,36 +245,37 @@ fi
 
 With that config, every automatic continuation prompt will include the script stdout after codex-loop's normal continuation instructions. If the script exits non-zero or exceeds `timeout_seconds`, codex-loop still continues the loop and injects a short warning instead of the script output.
 
-## Uninstall
+## 🗑️ Uninstall
 
 ```bash
 codex-loop uninstall
 ```
 
-This removes only `~/.codex/codex-loop/`. It leaves `~/.codex/config.toml` and Codex plugin install state unchanged.
-It also removes only the `codex-loop`-managed hook registrations from `~/.codex/hooks.json`, preserving unrelated user hooks.
+This removes only `~/.codex/codex-loop/`. It leaves `~/.codex/config.toml` and Codex plugin install state unchanged. It also removes only the `codex-loop`-managed hook registrations from `~/.codex/hooks.json`, preserving unrelated user hooks.
 
-## Development
+## 🛠️ Development
 
 ```bash
-make deps
-make verify
+make deps        # Tidy and verify modules
+make verify      # Full pipeline: fmt → vet → lint → race tests → build
 ```
-
-`make verify` runs formatting, vetting, linting, race-enabled tests, and build checks.
 
 Release tooling mirrors the project CI:
 
 ```bash
-make release-check
-make release-snapshot
+make release-check       # Validate .goreleaser.yml with current GoReleaser v2 CLI
+make release-snapshot    # Build local snapshot artifacts under dist/ (no publish/sign/SBOM)
 ```
 
-- `make release-check` validates `.goreleaser.yml` with the current GoReleaser v2 CLI.
-- `make release-snapshot` builds local snapshot artifacts under `dist/` without publishing, signing, or SBOM generation.
 - GitHub Actions runs `make verify` on pushes and pull requests to `main`.
 - Pushing a `v*` tag publishes a GitHub release through GoReleaser.
 
-## Privacy
+## 🔒 Privacy
 
-`codex-loop` does not send data to a network service. It reads Codex hook JSON from stdin, writes hook decisions to stdout, and stores loop state locally under `~/.codex/codex-loop/`.
+`codex-loop` itself does not send data to a network service. It reads Codex hook JSON from stdin, writes hook decisions to stdout, and stores loop state locally under `~/.codex/codex-loop/`.
+
+Goal loops intentionally invoke the local `codex exec` command for confirmation, which uses the user's configured Codex provider/auth. The local JSONL log stores compact verdict metadata only; it does not store the full original task prompt, full assistant message, confirmation prompt, or `pre_loop_continue` output.
+
+## 📄 License
+
+[MIT](LICENSE)

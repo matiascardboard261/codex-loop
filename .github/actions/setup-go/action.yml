@@ -5,7 +5,7 @@ inputs:
   go-version:
     description: "Go version to install"
     required: false
-    default: "1.24.x"
+    default: "1.26.2"
   cache:
     description: "Cache Go modules"
     required: false

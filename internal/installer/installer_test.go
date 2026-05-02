@@ -107,6 +107,27 @@ func TestInstallIsIdempotentForManagedHooks(t *testing.T) {
 	assertHookCommandCount(t, hooksDoc, "UserPromptSubmit", managedHookCommand("user-prompt-submit"), 1)
 }
 
+func TestInstallUsesConfiguredStopHookTimeout(t *testing.T) {
+	t.Parallel()
+
+	paths := mustPaths(t)
+	sourceBinary := writeSourceBinary(t)
+	if err := os.MkdirAll(filepath.Dir(paths.RuntimeConfigPath()), 0o755); err != nil {
+		t.Fatalf("create runtime config dir: %v", err)
+	}
+	if err := os.WriteFile(paths.RuntimeConfigPath(), []byte("[hooks]\nstop_timeout_seconds = 1234\n"), 0o644); err != nil {
+		t.Fatalf("write runtime config: %v", err)
+	}
+
+	if _, err := Install(paths, Options{SourceBinary: sourceBinary}); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	hooksDoc := readJSONFile(t, paths.HooksPath())
+	assertHookTimeout(t, hooksDoc, "Stop", managedHookCommand("stop"), 1234)
+	assertHookTimeout(t, hooksDoc, "UserPromptSubmit", managedHookCommand("user-prompt-submit"), 30)
+}
+
 func TestEnsureCodexHooksEnabledAddsFeatureSection(t *testing.T) {
 	t.Parallel()
 
@@ -229,7 +250,7 @@ func TestManagedHooksTemplateMatchesBundledPluginHooks(t *testing.T) {
 
 	root := repoRoot(t)
 	expected := readJSONFile(t, filepath.Join(root, "plugins", "codex-loop", "hooks", "hooks.json"))
-	actual := normalizeJSONDoc(t, managedHooksTemplate())
+	actual := normalizeJSONDoc(t, managedHooksTemplate(loop.DefaultStopHookTimeoutSeconds))
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatalf("managed hooks template diverged from bundled plugin hooks\nactual: %#v\nexpected: %#v", actual, expected)
 	}
@@ -307,6 +328,18 @@ func assertHookCommandCount(t *testing.T, hooksDoc map[string]any, eventName str
 	}
 }
 
+func assertHookTimeout(t *testing.T, hooksDoc map[string]any, eventName string, command string, expected int) {
+	t.Helper()
+	hook := findHookCommand(t, hooksDoc, eventName, command)
+	timeout, ok := hook["timeout"].(float64)
+	if !ok {
+		t.Fatalf("expected timeout for command %q under hooks.%s, got %#v", command, eventName, hook["timeout"])
+	}
+	if int(timeout) != expected {
+		t.Fatalf("expected timeout %d for command %q under hooks.%s, got %v", expected, command, eventName, timeout)
+	}
+}
+
 func countHookCommand(t *testing.T, hooksDoc map[string]any, eventName string, command string) int {
 	t.Helper()
 	hooksRoot, ok := hooksDoc["hooks"].(map[string]any)
@@ -338,6 +371,39 @@ func countHookCommand(t *testing.T, hooksDoc map[string]any, eventName string, c
 		}
 	}
 	return count
+}
+
+func findHookCommand(t *testing.T, hooksDoc map[string]any, eventName string, command string) map[string]any {
+	t.Helper()
+	hooksRoot, ok := hooksDoc["hooks"].(map[string]any)
+	if !ok {
+		t.Fatalf("hooks document missing hooks object: %#v", hooksDoc["hooks"])
+	}
+	matcherGroups, ok := hooksRoot[eventName].([]any)
+	if !ok {
+		t.Fatalf("hooks.%s missing", eventName)
+	}
+	for _, matcherGroupAny := range matcherGroups {
+		matcherGroup, ok := matcherGroupAny.(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected matcher group %#v", matcherGroupAny)
+		}
+		hooks, ok := matcherGroup["hooks"].([]any)
+		if !ok {
+			continue
+		}
+		for _, hookAny := range hooks {
+			hook, ok := hookAny.(map[string]any)
+			if !ok {
+				t.Fatalf("unexpected hook %#v", hookAny)
+			}
+			if hook["command"] == command {
+				return hook
+			}
+		}
+	}
+	t.Fatalf("expected command %q under hooks.%s", command, eventName)
+	return nil
 }
 
 func normalizeJSONDoc(t *testing.T, payload any) map[string]any {

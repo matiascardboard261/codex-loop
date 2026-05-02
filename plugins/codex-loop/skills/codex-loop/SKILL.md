@@ -1,6 +1,6 @@
 ---
 name: codex-loop
-description: Install or refresh the Codex Loop runtime for structured [[CODEX_LOOP ...]] activation with either min="..." or rounds="...". Use only for codex-loop setup, status, uninstall, or activation guidance.
+description: Install or refresh the Codex Loop runtime for structured [[CODEX_LOOP ...]] activation with min="...", rounds="...", or goal="...". Use only for codex-loop setup, status, uninstall, or activation guidance.
 ---
 
 # Codex Loop
@@ -9,7 +9,7 @@ description: Install or refresh the Codex Loop runtime for structured [[CODEX_LO
 
 **Step 1: Inspect current global Codex state**
 1. Read `~/.codex/config.toml` only if it exists so you can explain whether `features.codex_hooks` was already enabled.
-2. Read `~/.codex/codex-loop/config.toml` only if it exists so you can describe optional continuation guidance and any `pre_loop_continue` command.
+2. Read `~/.codex/codex-loop/config.toml` only if it exists so you can describe optional continuation guidance, goal confirmation settings, Stop hook timeout, and any argv-based `pre_loop_continue` command.
 3. Do not hand-edit global hook files for normal setup; `codex-loop install` syncs the bundled hook commands into `~/.codex/hooks.json` while preserving unrelated hooks.
 
 **Step 2: Install or refresh the runtime**
@@ -25,8 +25,11 @@ description: Install or refresh the Codex Loop runtime for structured [[CODEX_LO
 2. Tell the user that the header must contain exactly one limiter:
    - `[[CODEX_LOOP name="release-stress-qa" min="6h"]]`
    - `[[CODEX_LOOP name="release-stress-qa" rounds="3"]]`
-3. Tell the user that the task prompt starts on the next line and remains the source task for every continuation.
-4. Tell the user that loop state is persisted under `~/.codex/codex-loop/loops/`.
+   - `[[CODEX_LOOP name="release-stress-qa" goal="ship only after verification"]]`
+3. Tell the user that goal loops run a configurable headless confirmation command before continuing or completing; the default is `codex exec --yolo`.
+4. Tell the user that model and reasoning are separate: `confirm_model="gpt-5.5"` and `confirm_reasoning_effort="xhigh"`.
+5. Tell the user that the task prompt starts on the next line and remains the source task for every continuation.
+6. Tell the user that loop state is persisted under `~/.codex/codex-loop/loops/` and goal-check metadata is appended to `~/.codex/codex-loop/runs.jsonl`.
 
 ## Commands
 
@@ -34,7 +37,9 @@ description: Install or refresh the Codex Loop runtime for structured [[CODEX_LO
 - `codex-loop status`: print active loop state as JSON.
 - `codex-loop status --all`: include completed, superseded, and cut-short loops.
 - `codex-loop uninstall`: remove the managed `~/.codex/codex-loop/` runtime directory and only the `codex-loop`-managed hook registrations.
-- `[pre_loop_continue]`: optional codex-loop runtime hook that runs synchronously inside the Stop handler before an automatic continuation prompt is emitted.
+- `[pre_loop_continue]`: optional codex-loop runtime hook configured with a shell-like `command = ""` string that is parsed to argv and run synchronously inside the Stop handler before an automatic continuation prompt is emitted.
+- `[goal]`: optional defaults for goal confirmation, including `confirm_model`, `confirm_reasoning_effort`, `confirm_command`, `timeout_seconds`, and `max_output_bytes`.
+- `[hooks].stop_timeout_seconds`: managed Stop hook timeout written during `codex-loop install`; rerun install and restart Codex after changing it.
 
 ## Error Handling
 

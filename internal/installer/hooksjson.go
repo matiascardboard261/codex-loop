@@ -9,12 +9,15 @@ import (
 )
 
 const (
-	stopStatusMessage       = "Evaluating the codex loop"
-	userPromptStatusMessage = "Preparing the codex loop"
-	hookTimeoutSeconds      = 30
+	stopStatusMessage        = "Evaluating the codex loop"
+	userPromptStatusMessage  = "Preparing the codex loop"
+	userPromptTimeoutSeconds = 30
 )
 
-func managedHooksTemplate() map[string]any {
+func managedHooksTemplate(stopTimeoutSeconds int) map[string]any {
+	if stopTimeoutSeconds <= 0 {
+		stopTimeoutSeconds = loop.DefaultStopHookTimeoutSeconds
+	}
 	return map[string]any{
 		"hooks": map[string]any{
 			"Stop": []any{
@@ -23,7 +26,7 @@ func managedHooksTemplate() map[string]any {
 						map[string]any{
 							"command":       managedHookCommand("stop"),
 							"statusMessage": stopStatusMessage,
-							"timeout":       hookTimeoutSeconds,
+							"timeout":       stopTimeoutSeconds,
 							"type":          "command",
 						},
 					},
@@ -35,7 +38,7 @@ func managedHooksTemplate() map[string]any {
 						map[string]any{
 							"command":       managedHookCommand("user-prompt-submit"),
 							"statusMessage": userPromptStatusMessage,
-							"timeout":       hookTimeoutSeconds,
+							"timeout":       userPromptTimeoutSeconds,
 							"type":          "command",
 						},
 					},
@@ -55,7 +58,8 @@ func managedHookCommand(subcommand string) string {
 }
 
 func ensureManagedHookConfig(paths loop.Paths) error {
-	template := managedHooksTemplate()
+	cfg := loop.LoadRuntimeConfig(paths)
+	template := managedHooksTemplate(cfg.Hooks.StopTimeoutSeconds)
 	existing, err := loadHookConfig(paths.HooksPath())
 	if err != nil {
 		return err
@@ -81,7 +85,7 @@ func removeManagedHookConfig(paths loop.Paths) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	cleaned, removed, err := removeManagedHooks(existing, managedHooksTemplate())
+	cleaned, removed, err := removeManagedHooks(existing, managedHooksTemplate(loop.DefaultStopHookTimeoutSeconds))
 	if err != nil {
 		return false, err
 	}

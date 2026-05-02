@@ -15,10 +15,21 @@ optional_skill_name = ""
 optional_skill_path = ""
 extra_continuation_guidance = ""
 
+# Managed Codex lifecycle hook settings. Re-run codex-loop install after changing these.
+[hooks]
+stop_timeout_seconds = 2700
+
+# Goal-loop confirmation settings.
+[goal]
+confirm_model = "gpt-5.5"
+confirm_reasoning_effort = "high"
+confirm_command = "codex exec --cd $WORKSPACE_ROOT --ephemeral --yolo --output-schema $SCHEMA_PATH --output-last-message $OUTPUT_PATH $MODEL_ARGV $REASONING_ARGV --skip-git-repo-check -"
+timeout_seconds = 2400
+max_output_bytes = 12000
+
 # Optional command executed inside codex-loop before each automatic continuation.
 [pre_loop_continue]
 command = ""
-args = []
 cwd = "session_cwd"
 timeout_seconds = 60
 max_output_bytes = 12000
@@ -28,15 +39,28 @@ type RuntimeConfig struct {
 	OptionalSkillName         string                `toml:"optional_skill_name"`
 	OptionalSkillPath         string                `toml:"optional_skill_path"`
 	ExtraContinuationGuidance string                `toml:"extra_continuation_guidance"`
+	Hooks                     HooksConfig           `toml:"hooks"`
+	Goal                      GoalConfig            `toml:"goal"`
 	PreLoopContinue           PreLoopContinueConfig `toml:"pre_loop_continue"`
 }
 
+type HooksConfig struct {
+	StopTimeoutSeconds int `toml:"stop_timeout_seconds"`
+}
+
+type GoalConfig struct {
+	ConfirmModel           string `toml:"confirm_model"`
+	ConfirmReasoningEffort string `toml:"confirm_reasoning_effort"`
+	ConfirmCommand         string `toml:"confirm_command"`
+	TimeoutSeconds         int    `toml:"timeout_seconds"`
+	MaxOutputBytes         int    `toml:"max_output_bytes"`
+}
+
 type PreLoopContinueConfig struct {
-	Command        string   `toml:"command"`
-	Args           []string `toml:"args"`
-	CWD            string   `toml:"cwd"`
-	TimeoutSeconds int      `toml:"timeout_seconds"`
-	MaxOutputBytes int      `toml:"max_output_bytes"`
+	Command        string `toml:"command"`
+	CWD            string `toml:"cwd"`
+	TimeoutSeconds int    `toml:"timeout_seconds"`
+	MaxOutputBytes int    `toml:"max_output_bytes"`
 }
 
 type OptionalContinuationConfig struct {
@@ -51,14 +75,31 @@ func LoadRuntimeConfig(paths Paths) RuntimeConfig {
 	if _, err := os.Stat(path); err != nil {
 		return cfg
 	}
-	if _, err := toml.DecodeFile(path, &cfg); err == nil {
-		return normalizeRuntimeConfig(cfg)
+	if metadata, err := toml.DecodeFile(path, &cfg); err == nil {
+		normalized := normalizeRuntimeConfig(cfg)
+		if metadata.IsDefined("goal", "confirm_model") && strings.TrimSpace(cfg.Goal.ConfirmModel) == "" {
+			normalized.Goal.ConfirmModel = ""
+		}
+		if metadata.IsDefined("goal", "confirm_reasoning_effort") && strings.TrimSpace(cfg.Goal.ConfirmReasoningEffort) == "" {
+			normalized.Goal.ConfirmReasoningEffort = ""
+		}
+		return normalized
 	}
 	return parseRuntimeConfigFallback(path)
 }
 
 func defaultRuntimeConfig() RuntimeConfig {
 	return RuntimeConfig{
+		Hooks: HooksConfig{
+			StopTimeoutSeconds: DefaultStopHookTimeoutSeconds,
+		},
+		Goal: GoalConfig{
+			ConfirmModel:           DefaultGoalConfirmModel,
+			ConfirmReasoningEffort: DefaultGoalConfirmReasoningEffort,
+			ConfirmCommand:         DefaultGoalConfirmCommand(),
+			TimeoutSeconds:         DefaultGoalTimeoutSeconds,
+			MaxOutputBytes:         DefaultGoalMaxOutputBytes,
+		},
 		PreLoopContinue: PreLoopContinueConfig{
 			CWD:            PreLoopContinueCWDSession,
 			TimeoutSeconds: DefaultPreLoopContinueTimeoutSeconds,
@@ -68,6 +109,31 @@ func defaultRuntimeConfig() RuntimeConfig {
 }
 
 func normalizeRuntimeConfig(cfg RuntimeConfig) RuntimeConfig {
+	if cfg.Hooks.StopTimeoutSeconds <= 0 {
+		cfg.Hooks.StopTimeoutSeconds = DefaultStopHookTimeoutSeconds
+	}
+	if strings.TrimSpace(cfg.Goal.ConfirmModel) == "" {
+		cfg.Goal.ConfirmModel = DefaultGoalConfirmModel
+	}
+	if strings.TrimSpace(cfg.Goal.ConfirmReasoningEffort) == "" || !ValidReasoningEffort(cfg.Goal.ConfirmReasoningEffort) {
+		cfg.Goal.ConfirmReasoningEffort = DefaultGoalConfirmReasoningEffort
+	}
+	if strings.TrimSpace(cfg.Goal.ConfirmCommand) == "" {
+		cfg.Goal.ConfirmCommand = DefaultGoalConfirmCommand()
+	}
+	if cfg.Goal.TimeoutSeconds <= 0 {
+		cfg.Goal.TimeoutSeconds = DefaultGoalTimeoutSeconds
+	}
+	maxGoalTimeout := cfg.Hooks.StopTimeoutSeconds - GoalHookTimeoutGraceSeconds
+	if maxGoalTimeout <= 0 {
+		maxGoalTimeout = 1
+	}
+	if cfg.Goal.TimeoutSeconds > maxGoalTimeout {
+		cfg.Goal.TimeoutSeconds = maxGoalTimeout
+	}
+	if cfg.Goal.MaxOutputBytes <= 0 {
+		cfg.Goal.MaxOutputBytes = DefaultGoalMaxOutputBytes
+	}
 	if strings.TrimSpace(cfg.PreLoopContinue.CWD) == "" {
 		cfg.PreLoopContinue.CWD = PreLoopContinueCWDSession
 	}

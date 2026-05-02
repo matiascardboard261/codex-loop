@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -19,7 +20,17 @@ const (
 
 	DefaultPreLoopContinueTimeoutSeconds = 60
 	DefaultPreLoopContinueMaxOutputBytes = 12000
+	DefaultStopHookTimeoutSeconds        = 2700
+	DefaultGoalTimeoutSeconds            = 2400
+	DefaultGoalMaxOutputBytes            = 12000
+	DefaultGoalConfirmModel              = "gpt-5.5"
+	DefaultGoalConfirmReasoningEffort    = "high"
+	GoalHookTimeoutGraceSeconds          = 30
 )
+
+func DefaultGoalConfirmCommand() string {
+	return "codex exec --cd $WORKSPACE_ROOT --ephemeral --yolo --output-schema $SCHEMA_PATH --output-last-message $OUTPUT_PATH $MODEL_ARGV $REASONING_ARGV --skip-git-repo-check -"
+}
 
 type PreLoopContinueInput struct {
 	EventName          string      `json:"event_name"`
@@ -79,7 +90,7 @@ func appendPreLoopContinue(ctx context.Context, paths Paths, payload StopPayload
 		return reason
 	}
 
-	result := runPreLoopContinue(ctx, cfg, payload, record, remainingSeconds, aggressive, reason, now)
+	result := runPreLoopContinue(ctx, paths, cfg, payload, record, remainingSeconds, aggressive, reason, now)
 	if result.Warning != "" {
 		return strings.TrimSpace(reason + "\n\npre_loop_continue warning:\n" + result.Warning)
 	}
@@ -94,15 +105,10 @@ func appendPreLoopContinue(ctx context.Context, paths Paths, payload StopPayload
 	return strings.TrimSpace(reason + "\n\npre_loop_continue output:\n" + output)
 }
 
-func runPreLoopContinue(ctx context.Context, cfg PreLoopContinueConfig, payload StopPayload, record LoopRecord, remainingSeconds *int, aggressive bool, reason string, now time.Time) preLoopContinueRunResult {
+func runPreLoopContinue(ctx context.Context, paths Paths, cfg PreLoopContinueConfig, payload StopPayload, record LoopRecord, remainingSeconds *int, aggressive bool, reason string, now time.Time) preLoopContinueRunResult {
 	cwd, err := resolvePreLoopContinueCWD(cfg, payload, record)
 	if err != nil {
 		return preLoopContinueRunResult{Warning: err.Error()}
-	}
-
-	command := strings.TrimSpace(cfg.Command)
-	if strings.ContainsAny(command, `/\`) && !filepath.IsAbs(command) {
-		command = filepath.Join(cwd, command)
 	}
 
 	input := PreLoopContinueInput{
@@ -121,6 +127,45 @@ func runPreLoopContinue(ctx context.Context, cfg PreLoopContinueConfig, payload 
 	if err != nil {
 		return preLoopContinueRunResult{Warning: fmt.Sprintf("encode input JSON: %v", err)}
 	}
+	if err := os.MkdirAll(paths.RuntimeRoot(), 0o755); err != nil {
+		return preLoopContinueRunResult{Warning: fmt.Sprintf("create runtime directory: %v", err)}
+	}
+	inputFile, err := os.CreateTemp(paths.RuntimeRoot(), "pre-loop-input-*.json")
+	if err != nil {
+		return preLoopContinueRunResult{Warning: fmt.Sprintf("create input file: %v", err)}
+	}
+	inputPath := inputFile.Name()
+	cleanup := func() {
+		_ = os.Remove(inputPath)
+	}
+	defer cleanup()
+	if _, err := inputFile.Write(stdin); err != nil {
+		_ = inputFile.Close()
+		return preLoopContinueRunResult{Warning: fmt.Sprintf("write input file: %v", err)}
+	}
+	if err := inputFile.Close(); err != nil {
+		return preLoopContinueRunResult{Warning: fmt.Sprintf("close input file: %v", err)}
+	}
+
+	values := map[string]string{
+		"INPUT_JSON":          string(stdin),
+		"INPUT_FILE":          inputPath,
+		"WORKSPACE_ROOT":      record.WorkspaceRoot,
+		"CWD":                 cwd,
+		"SESSION_ID":          record.SessionID,
+		"LOOP_NAME":           record.Name,
+		"LOOP_SLUG":           record.Slug,
+		"CONTINUATION_REASON": reason,
+		"RUNS_LOG_PATH":       paths.RunsLogPath(),
+		"CODEX_HOME":          paths.CodexHome,
+	}
+	command, args, env, err := buildConfiguredCommand(cfg.Command, cwd, commandExpansion{
+		Values:    values,
+		EnvPrefix: "CODEX_LOOP_PRE_LOOP_",
+	})
+	if err != nil {
+		return preLoopContinueRunResult{Warning: err.Error()}
+	}
 
 	timeout := time.Duration(cfg.TimeoutSeconds) * time.Second
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -128,8 +173,9 @@ func runPreLoopContinue(ctx context.Context, cfg PreLoopContinueConfig, payload 
 
 	var stdout limitedOutputBuffer
 	stdout.limit = cfg.MaxOutputBytes
-	cmd := exec.CommandContext(runCtx, command, cfg.Args...)
+	cmd := exec.CommandContext(runCtx, command, args...)
 	cmd.Dir = cwd
+	cmd.Env = env
 	cmd.Stdin = bytes.NewReader(stdin)
 	cmd.Stdout = &stdout
 	cmd.Stderr = io.Discard

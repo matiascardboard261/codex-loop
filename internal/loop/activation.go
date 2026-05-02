@@ -12,6 +12,7 @@ const (
 
 	LimitModeTime   = "time"
 	LimitModeRounds = "rounds"
+	LimitModeGoal   = "goal"
 )
 
 var (
@@ -33,6 +34,9 @@ type Activation struct {
 	MinDurationSeconds int
 	RoundsText         string
 	TargetRounds       int
+	GoalText           string
+	ConfirmModel       string
+	ConfirmReasoning   string
 }
 
 func LooksLikeActivation(prompt string) bool {
@@ -67,11 +71,30 @@ func ExtractActivation(prompt string) (Activation, bool, error) {
 	name := strings.TrimSpace(attributes["name"])
 	durationText := strings.TrimSpace(attributes["min"])
 	roundsText := strings.TrimSpace(attributes["rounds"])
+	goalText, hasGoal := attributes["goal"]
+	confirmModel := strings.TrimSpace(attributes["confirm_model"])
+	confirmReasoning := strings.TrimSpace(attributes["confirm_reasoning_effort"])
 	if name == "" {
 		return Activation{}, false, fmt.Errorf(`CODEX_LOOP header requires name="..."`)
 	}
-	if (durationText != "") == (roundsText != "") {
-		return Activation{}, false, fmt.Errorf(`CODEX_LOOP header requires exactly one of min="..." or rounds="..."`)
+	limiters := 0
+	if durationText != "" {
+		limiters++
+	}
+	if roundsText != "" {
+		limiters++
+	}
+	if hasGoal {
+		limiters++
+	}
+	if limiters != 1 {
+		return Activation{}, false, fmt.Errorf(`CODEX_LOOP header requires exactly one of min="...", rounds="...", or goal="..."`)
+	}
+	if !hasGoal && (confirmModel != "" || confirmReasoning != "") {
+		return Activation{}, false, fmt.Errorf(`CODEX_LOOP header allows confirm_model and confirm_reasoning_effort only with goal="..."`)
+	}
+	if confirmReasoning != "" && !ValidReasoningEffort(confirmReasoning) {
+		return Activation{}, false, fmt.Errorf("invalid confirm_reasoning_effort %q", confirmReasoning)
 	}
 
 	taskPrompt := ""
@@ -96,6 +119,14 @@ func ExtractActivation(prompt string) (Activation, bool, error) {
 		return activation, true, nil
 	}
 
+	if hasGoal {
+		activation.LimitMode = LimitModeGoal
+		activation.GoalText = strings.TrimSpace(goalText)
+		activation.ConfirmModel = confirmModel
+		activation.ConfirmReasoning = confirmReasoning
+		return activation, true, nil
+	}
+
 	rounds, err := ParseRounds(roundsText)
 	if err != nil {
 		return Activation{}, false, err
@@ -104,6 +135,15 @@ func ExtractActivation(prompt string) (Activation, bool, error) {
 	activation.RoundsText = roundsText
 	activation.TargetRounds = rounds
 	return activation, true, nil
+}
+
+func ValidReasoningEffort(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "", "minimal", "low", "medium", "high", "xhigh":
+		return true
+	default:
+		return false
+	}
 }
 
 func ParseDurationSeconds(value string) (int, error) {

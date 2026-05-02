@@ -149,8 +149,7 @@ func TestStopHookWritesContinuationJSON(t *testing.T) {
 		t.Fatalf("create runtime config dir: %v", err)
 	}
 	if err := os.WriteFile(paths.RuntimeConfigPath(), []byte(`[pre_loop_continue]
-command = "/bin/sh"
-args = ["-c", "printf cli-pre-loop"]
+command = "/bin/sh -c 'printf cli-pre-loop'"
 `), 0o644); err != nil {
 		t.Fatalf("write runtime config: %v", err)
 	}
