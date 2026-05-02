@@ -188,7 +188,7 @@ func newStopHookCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := loop.HandleStop(paths, payload, zeroTime())
+			result, err := loop.HandleStop(cmd.Context(), paths, payload, zeroTime())
 			if err != nil {
 				return err
 			}

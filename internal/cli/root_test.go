@@ -145,6 +145,15 @@ func TestStopHookWritesContinuationJSON(t *testing.T) {
 	if err := loop.ReplaceLoopFile(loop.CreateLoopPath(paths, record.Slug, fixedTime()), record); err != nil {
 		t.Fatalf("write loop: %v", err)
 	}
+	if err := os.MkdirAll(filepath.Dir(paths.RuntimeConfigPath()), 0o755); err != nil {
+		t.Fatalf("create runtime config dir: %v", err)
+	}
+	if err := os.WriteFile(paths.RuntimeConfigPath(), []byte(`[pre_loop_continue]
+command = "/bin/sh"
+args = ["-c", "printf cli-pre-loop"]
+`), 0o644); err != nil {
+		t.Fatalf("write runtime config: %v", err)
+	}
 
 	payload := `{"session_id":"sess-1","cwd":".","last_assistant_message":"Done."}`
 	var stdout bytes.Buffer
@@ -162,6 +171,8 @@ func TestStopHookWritesContinuationJSON(t *testing.T) {
 		t.Fatalf("expected block decision, got %#v", result)
 	}
 	assertContains(t, result["reason"].(string), "Round 2 of 2 begins now.")
+	assertContains(t, result["reason"].(string), "pre_loop_continue output:")
+	assertContains(t, result["reason"].(string), "cli-pre-loop")
 }
 
 func TestInstallCommandAcceptsSourceBinaryForTests(t *testing.T) {

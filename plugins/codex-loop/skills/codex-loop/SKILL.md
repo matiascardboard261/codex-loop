@@ -9,7 +9,7 @@ description: Install or refresh the Codex Loop runtime for structured [[CODEX_LO
 
 **Step 1: Inspect current global Codex state**
 1. Read `~/.codex/config.toml` only if it exists so you can explain whether `features.codex_hooks` was already enabled.
-2. Read `~/.codex/codex-loop/config.toml` only if it exists so you can describe optional continuation guidance.
+2. Read `~/.codex/codex-loop/config.toml` only if it exists so you can describe optional continuation guidance and any `pre_loop_continue` command.
 3. Do not hand-edit global hook files for normal setup; `codex-loop install` syncs the bundled hook commands into `~/.codex/hooks.json` while preserving unrelated hooks.
 
 **Step 2: Install or refresh the runtime**
@@ -34,6 +34,7 @@ description: Install or refresh the Codex Loop runtime for structured [[CODEX_LO
 - `codex-loop status`: print active loop state as JSON.
 - `codex-loop status --all`: include completed, superseded, and cut-short loops.
 - `codex-loop uninstall`: remove the managed `~/.codex/codex-loop/` runtime directory and only the `codex-loop`-managed hook registrations.
+- `[pre_loop_continue]`: optional codex-loop runtime hook that runs synchronously inside the Stop handler before an automatic continuation prompt is emitted.
 
 ## Error Handling
 

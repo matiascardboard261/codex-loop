@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -74,9 +75,12 @@ func HandleUserPromptSubmit(paths Paths, payload UserPromptPayload, now time.Tim
 	return nil, nil
 }
 
-func HandleStop(paths Paths, payload StopPayload, now time.Time) (HookResult, error) {
+func HandleStop(ctx context.Context, paths Paths, payload StopPayload, now time.Time) (HookResult, error) {
 	if strings.TrimSpace(payload.SessionID) == "" {
 		return nil, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -163,9 +167,11 @@ func HandleStop(paths Paths, payload StopPayload, now time.Time) (HookResult, er
 		return StopWarning(fmt.Sprintf("Codex loop stop hook failed: %v", err)), nil
 	}
 
+	reason := ContinuationReason(paths, record, remainingSeconds, aggressive)
+	reason = appendPreLoopContinue(ctx, paths, payload, record, remainingSeconds, aggressive, reason, now)
 	return HookResult{
 		"decision": "block",
-		"reason":   ContinuationReason(paths, record, remainingSeconds, aggressive),
+		"reason":   reason,
 	}, nil
 }
 

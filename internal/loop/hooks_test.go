@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -154,7 +155,7 @@ extra_continuation_guidance = "Capture concrete evidence before you stop."
 	start := fixedTime()
 	path := writeLoop(t, paths, "sess-1", repoRoot, `[[CODEX_LOOP name="release-stress-qa" min="6h"]]`+"\nRun the QA task.", start)
 	latest := "Task looks complete."
-	result, err := HandleStop(paths, StopPayload{
+	result, err := HandleStop(context.Background(), paths, StopPayload{
 		SessionID:            "sess-1",
 		CWD:                  repoRoot,
 		LastAssistantMessage: &latest,
@@ -195,7 +196,7 @@ func TestStopMarksTimeLoopCompletedAfterDeadline(t *testing.T) {
 	path := writeLoop(t, paths, "sess-1", repoRoot, `[[CODEX_LOOP name="release-stress-qa" min="5m"]]`+"\nRun the QA task.", start)
 	latest := "Done."
 
-	result, err := HandleStop(paths, StopPayload{
+	result, err := HandleStop(context.Background(), paths, StopPayload{
 		SessionID:            "sess-1",
 		CWD:                  repoRoot,
 		LastAssistantMessage: &latest,
@@ -224,17 +225,17 @@ func TestStopRoundsModeCompletesTargetRounds(t *testing.T) {
 	path := writeLoop(t, paths, "sess-1", repoRoot, `[[CODEX_LOOP name="release-stress-qa" rounds="3"]]`+"\nRun the QA task.", start)
 
 	firstMessage := "Round one done."
-	first, err := HandleStop(paths, StopPayload{SessionID: "sess-1", CWD: repoRoot, LastAssistantMessage: &firstMessage}, start.Add(5*time.Minute))
+	first, err := HandleStop(context.Background(), paths, StopPayload{SessionID: "sess-1", CWD: repoRoot, LastAssistantMessage: &firstMessage}, start.Add(5*time.Minute))
 	if err != nil {
 		t.Fatalf("first stop: %v", err)
 	}
 	secondMessage := "Round two done."
-	second, err := HandleStop(paths, StopPayload{SessionID: "sess-1", CWD: repoRoot, LastAssistantMessage: &secondMessage}, start.Add(10*time.Minute))
+	second, err := HandleStop(context.Background(), paths, StopPayload{SessionID: "sess-1", CWD: repoRoot, LastAssistantMessage: &secondMessage}, start.Add(10*time.Minute))
 	if err != nil {
 		t.Fatalf("second stop: %v", err)
 	}
 	thirdMessage := "Round three done."
-	third, err := HandleStop(paths, StopPayload{SessionID: "sess-1", CWD: repoRoot, LastAssistantMessage: &thirdMessage}, start.Add(15*time.Minute))
+	third, err := HandleStop(context.Background(), paths, StopPayload{SessionID: "sess-1", CWD: repoRoot, LastAssistantMessage: &thirdMessage}, start.Add(15*time.Minute))
 	if err != nil {
 		t.Fatalf("third stop: %v", err)
 	}
@@ -278,12 +279,12 @@ func TestStopEscalatesOnceThenCutsShortInRoundsMode(t *testing.T) {
 	}
 
 	escalationMessage := "Stopped again."
-	escalation, err := HandleStop(paths, StopPayload{SessionID: "sess-1", CWD: repoRoot, LastAssistantMessage: &escalationMessage}, start.Add(90*time.Second))
+	escalation, err := HandleStop(context.Background(), paths, StopPayload{SessionID: "sess-1", CWD: repoRoot, LastAssistantMessage: &escalationMessage}, start.Add(90*time.Second))
 	if err != nil {
 		t.Fatalf("escalation stop: %v", err)
 	}
 	cutShortMessage := "Stopped quickly again."
-	cutShort, err := HandleStop(paths, StopPayload{SessionID: "sess-1", CWD: repoRoot, LastAssistantMessage: &cutShortMessage}, start.Add(150*time.Second))
+	cutShort, err := HandleStop(context.Background(), paths, StopPayload{SessionID: "sess-1", CWD: repoRoot, LastAssistantMessage: &cutShortMessage}, start.Add(150*time.Second))
 	if err != nil {
 		t.Fatalf("cut-short stop: %v", err)
 	}
@@ -301,6 +302,220 @@ func TestStopEscalatesOnceThenCutsShortInRoundsMode(t *testing.T) {
 	}
 	if updated.CompletedRounds != 2 {
 		t.Fatalf("expected completed rounds 2, got %d", updated.CompletedRounds)
+	}
+}
+
+func TestStopRunsPreLoopContinueWithSessionCWDAndJSONInput(t *testing.T) {
+	t.Parallel()
+
+	paths := mustPaths(t)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	sessionCWD := filepath.Join(repoRoot, "nested")
+	if err := os.MkdirAll(sessionCWD, 0o755); err != nil {
+		t.Fatalf("create session cwd: %v", err)
+	}
+	writeRuntimeConfig(t, paths, `[pre_loop_continue]
+command = "/bin/sh"
+args = ["-c", "printf 'cwd=%s\n' \"$PWD\"; cat"]
+`)
+
+	start := fixedTime()
+	writeLoop(t, paths, "sess-1", repoRoot, `[[CODEX_LOOP name="release-stress-qa" rounds="2"]]`+"\nRun the QA task.", start)
+	latest := "First pass done."
+	result, err := HandleStop(context.Background(), paths, StopPayload{
+		SessionID:            "sess-1",
+		CWD:                  sessionCWD,
+		LastAssistantMessage: &latest,
+	}, start.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("handle stop: %v", err)
+	}
+
+	reason := result["reason"].(string)
+	assertContains(t, reason, "pre_loop_continue output:")
+	assertContains(t, reason, "cwd="+sessionCWD)
+	assertContains(t, reason, `"event_name":"pre_loop_continue"`)
+	assertContains(t, reason, `"session_id":"sess-1"`)
+}
+
+func TestStopRunsPreLoopContinueWithWorkspaceRoot(t *testing.T) {
+	t.Parallel()
+
+	paths := mustPaths(t)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	sessionCWD := filepath.Join(repoRoot, "nested")
+	if err := os.MkdirAll(sessionCWD, 0o755); err != nil {
+		t.Fatalf("create session cwd: %v", err)
+	}
+	writeRuntimeConfig(t, paths, `[pre_loop_continue]
+command = "/bin/pwd"
+cwd = "workspace_root"
+`)
+
+	start := fixedTime()
+	writeLoop(t, paths, "sess-1", repoRoot, `[[CODEX_LOOP name="release-stress-qa" rounds="2"]]`+"\nRun the QA task.", start)
+	result, err := HandleStop(context.Background(), paths, StopPayload{
+		SessionID: "sess-1",
+		CWD:       sessionCWD,
+	}, start.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("handle stop: %v", err)
+	}
+
+	reason := result["reason"].(string)
+	assertContains(t, reason, "pre_loop_continue output:")
+	assertContains(t, reason, repoRoot)
+}
+
+func TestStopPreLoopContinueFailureContinuesWithWarning(t *testing.T) {
+	t.Parallel()
+
+	paths := mustPaths(t)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("create repo root: %v", err)
+	}
+	writeRuntimeConfig(t, paths, `[pre_loop_continue]
+command = "/bin/sh"
+args = ["-c", "printf secret >&2; exit 7"]
+`)
+
+	start := fixedTime()
+	writeLoop(t, paths, "sess-1", repoRoot, `[[CODEX_LOOP name="release-stress-qa" rounds="2"]]`+"\nRun the QA task.", start)
+	result, err := HandleStop(context.Background(), paths, StopPayload{
+		SessionID: "sess-1",
+		CWD:       repoRoot,
+	}, start.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("handle stop: %v", err)
+	}
+
+	if result["decision"] != "block" {
+		t.Fatalf("expected continuation despite failure, got %#v", result)
+	}
+	reason := result["reason"].(string)
+	assertContains(t, reason, "pre_loop_continue warning:")
+	assertContains(t, reason, "exit status 7")
+	assertNotContains(t, reason, "secret")
+}
+
+func TestStopPreLoopContinueTimeoutContinuesWithWarning(t *testing.T) {
+	t.Parallel()
+
+	paths := mustPaths(t)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("create repo root: %v", err)
+	}
+	writeRuntimeConfig(t, paths, `[pre_loop_continue]
+command = "/bin/sh"
+args = ["-c", "sleep 5"]
+timeout_seconds = 1
+`)
+
+	start := fixedTime()
+	writeLoop(t, paths, "sess-1", repoRoot, `[[CODEX_LOOP name="release-stress-qa" rounds="2"]]`+"\nRun the QA task.", start)
+	result, err := HandleStop(context.Background(), paths, StopPayload{
+		SessionID: "sess-1",
+		CWD:       repoRoot,
+	}, start.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("handle stop: %v", err)
+	}
+
+	reason := result["reason"].(string)
+	assertContains(t, reason, "pre_loop_continue warning:")
+	assertContains(t, reason, "timed out")
+}
+
+func TestStopPreLoopContinueTruncatesOutput(t *testing.T) {
+	t.Parallel()
+
+	paths := mustPaths(t)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("create repo root: %v", err)
+	}
+	writeRuntimeConfig(t, paths, `[pre_loop_continue]
+command = "/bin/sh"
+args = ["-c", "printf abcdef"]
+max_output_bytes = 4
+`)
+
+	start := fixedTime()
+	writeLoop(t, paths, "sess-1", repoRoot, `[[CODEX_LOOP name="release-stress-qa" rounds="2"]]`+"\nRun the QA task.", start)
+	result, err := HandleStop(context.Background(), paths, StopPayload{
+		SessionID: "sess-1",
+		CWD:       repoRoot,
+	}, start.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("handle stop: %v", err)
+	}
+
+	reason := result["reason"].(string)
+	assertContains(t, reason, "abcd")
+	assertContains(t, reason, "[output truncated after 4 bytes]")
+	assertNotContains(t, reason, "abcdef")
+}
+
+func TestStopPreLoopContinueInvalidCWDContinuesWithWarning(t *testing.T) {
+	t.Parallel()
+
+	paths := mustPaths(t)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("create repo root: %v", err)
+	}
+	writeRuntimeConfig(t, paths, `[pre_loop_continue]
+command = "/bin/sh"
+args = ["-c", "printf should-not-run"]
+cwd = "elsewhere"
+`)
+
+	start := fixedTime()
+	writeLoop(t, paths, "sess-1", repoRoot, `[[CODEX_LOOP name="release-stress-qa" rounds="2"]]`+"\nRun the QA task.", start)
+	result, err := HandleStop(context.Background(), paths, StopPayload{
+		SessionID: "sess-1",
+		CWD:       repoRoot,
+	}, start.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("handle stop: %v", err)
+	}
+
+	reason := result["reason"].(string)
+	assertContains(t, reason, "pre_loop_continue warning:")
+	assertContains(t, reason, `invalid cwd "elsewhere"`)
+	assertNotContains(t, reason, "should-not-run")
+}
+
+func TestStopPreLoopContinueDoesNotRunWhenLoopCompletes(t *testing.T) {
+	t.Parallel()
+
+	paths := mustPaths(t)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	marker := filepath.Join(t.TempDir(), "marker")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("create repo root: %v", err)
+	}
+	writeRuntimeConfig(t, paths, `[pre_loop_continue]
+command = "/bin/sh"
+args = ["-c", "touch \"$1\"", "sh", "`+marker+`"]
+`)
+
+	start := fixedTime()
+	writeLoop(t, paths, "sess-1", repoRoot, `[[CODEX_LOOP name="release-stress-qa" rounds="1"]]`+"\nRun the QA task.", start)
+	result, err := HandleStop(context.Background(), paths, StopPayload{
+		SessionID: "sess-1",
+		CWD:       repoRoot,
+	}, start.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("handle stop: %v", err)
+	}
+	if result != nil {
+		t.Fatalf("expected completed loop to return nil, got %#v", result)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("expected marker not to exist, stat err: %v", err)
 	}
 }
 
@@ -361,5 +576,12 @@ func assertContains(t *testing.T, haystack string, needle string) {
 	t.Helper()
 	if !strings.Contains(haystack, needle) {
 		t.Fatalf("expected %q to contain %q", haystack, needle)
+	}
+}
+
+func assertNotContains(t *testing.T, haystack string, needle string) {
+	t.Helper()
+	if strings.Contains(haystack, needle) {
+		t.Fatalf("expected %q not to contain %q", haystack, needle)
 	}
 }

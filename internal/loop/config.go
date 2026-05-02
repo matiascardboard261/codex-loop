@@ -14,12 +14,29 @@ const DefaultRuntimeConfig = `# Optional continuation guidance appended to every
 optional_skill_name = ""
 optional_skill_path = ""
 extra_continuation_guidance = ""
+
+# Optional command executed inside codex-loop before each automatic continuation.
+[pre_loop_continue]
+command = ""
+args = []
+cwd = "session_cwd"
+timeout_seconds = 60
+max_output_bytes = 12000
 `
 
 type RuntimeConfig struct {
-	OptionalSkillName         string `toml:"optional_skill_name"`
-	OptionalSkillPath         string `toml:"optional_skill_path"`
-	ExtraContinuationGuidance string `toml:"extra_continuation_guidance"`
+	OptionalSkillName         string                `toml:"optional_skill_name"`
+	OptionalSkillPath         string                `toml:"optional_skill_path"`
+	ExtraContinuationGuidance string                `toml:"extra_continuation_guidance"`
+	PreLoopContinue           PreLoopContinueConfig `toml:"pre_loop_continue"`
+}
+
+type PreLoopContinueConfig struct {
+	Command        string   `toml:"command"`
+	Args           []string `toml:"args"`
+	CWD            string   `toml:"cwd"`
+	TimeoutSeconds int      `toml:"timeout_seconds"`
+	MaxOutputBytes int      `toml:"max_output_bytes"`
 }
 
 type OptionalContinuationConfig struct {
@@ -29,15 +46,38 @@ type OptionalContinuationConfig struct {
 }
 
 func LoadRuntimeConfig(paths Paths) RuntimeConfig {
-	cfg := RuntimeConfig{}
+	cfg := defaultRuntimeConfig()
 	path := paths.RuntimeConfigPath()
 	if _, err := os.Stat(path); err != nil {
 		return cfg
 	}
 	if _, err := toml.DecodeFile(path, &cfg); err == nil {
-		return cfg
+		return normalizeRuntimeConfig(cfg)
 	}
 	return parseRuntimeConfigFallback(path)
+}
+
+func defaultRuntimeConfig() RuntimeConfig {
+	return RuntimeConfig{
+		PreLoopContinue: PreLoopContinueConfig{
+			CWD:            PreLoopContinueCWDSession,
+			TimeoutSeconds: DefaultPreLoopContinueTimeoutSeconds,
+			MaxOutputBytes: DefaultPreLoopContinueMaxOutputBytes,
+		},
+	}
+}
+
+func normalizeRuntimeConfig(cfg RuntimeConfig) RuntimeConfig {
+	if strings.TrimSpace(cfg.PreLoopContinue.CWD) == "" {
+		cfg.PreLoopContinue.CWD = PreLoopContinueCWDSession
+	}
+	if cfg.PreLoopContinue.TimeoutSeconds <= 0 {
+		cfg.PreLoopContinue.TimeoutSeconds = DefaultPreLoopContinueTimeoutSeconds
+	}
+	if cfg.PreLoopContinue.MaxOutputBytes <= 0 {
+		cfg.PreLoopContinue.MaxOutputBytes = DefaultPreLoopContinueMaxOutputBytes
+	}
+	return cfg
 }
 
 func ResolveOptionalContinuationConfig(paths Paths, workspaceRoot string) OptionalContinuationConfig {
@@ -78,9 +118,9 @@ func ResolveOptionalContinuationConfig(paths Paths, workspaceRoot string) Option
 func parseRuntimeConfigFallback(path string) RuntimeConfig {
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return RuntimeConfig{}
+		return defaultRuntimeConfig()
 	}
-	cfg := RuntimeConfig{}
+	cfg := defaultRuntimeConfig()
 	for _, rawLine := range strings.Split(string(content), "\n") {
 		line := strings.TrimSpace(rawLine)
 		if line == "" || strings.HasPrefix(line, "#") || !strings.Contains(line, "=") {
@@ -100,7 +140,7 @@ func parseRuntimeConfigFallback(path string) RuntimeConfig {
 			cfg.ExtraContinuationGuidance = value
 		}
 	}
-	return cfg
+	return normalizeRuntimeConfig(cfg)
 }
 
 func pathIsInside(root string, candidate string) bool {
