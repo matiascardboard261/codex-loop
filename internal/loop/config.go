@@ -23,8 +23,11 @@ stop_timeout_seconds = 2700
 [goal]
 confirm_model = "gpt-5.5"
 confirm_reasoning_effort = "high"
-confirm_command = "codex exec --cd $WORKSPACE_ROOT --ephemeral --yolo --output-schema $SCHEMA_PATH --output-last-message $OUTPUT_PATH $MODEL_ARGV $REASONING_ARGV --skip-git-repo-check -"
+confirm_command = "codex exec --cd $WORKSPACE_ROOT --ephemeral --yolo --output-last-message $CONFIRM_OUTPUT_PATH $MODEL_ARGV $REASONING_ARGV --skip-git-repo-check -"
 timeout_seconds = 2400
+interpret_model = "gpt-5.4-mini"
+interpret_reasoning_effort = "low"
+interpret_timeout_seconds = 120
 max_output_bytes = 12000
 
 # Optional command executed inside codex-loop before each automatic continuation.
@@ -49,11 +52,14 @@ type HooksConfig struct {
 }
 
 type GoalConfig struct {
-	ConfirmModel           string `toml:"confirm_model"`
-	ConfirmReasoningEffort string `toml:"confirm_reasoning_effort"`
-	ConfirmCommand         string `toml:"confirm_command"`
-	TimeoutSeconds         int    `toml:"timeout_seconds"`
-	MaxOutputBytes         int    `toml:"max_output_bytes"`
+	ConfirmModel             string `toml:"confirm_model"`
+	ConfirmReasoningEffort   string `toml:"confirm_reasoning_effort"`
+	ConfirmCommand           string `toml:"confirm_command"`
+	TimeoutSeconds           int    `toml:"timeout_seconds"`
+	InterpretModel           string `toml:"interpret_model"`
+	InterpretReasoningEffort string `toml:"interpret_reasoning_effort"`
+	InterpretTimeoutSeconds  int    `toml:"interpret_timeout_seconds"`
+	MaxOutputBytes           int    `toml:"max_output_bytes"`
 }
 
 type PreLoopContinueConfig struct {
@@ -83,6 +89,12 @@ func LoadRuntimeConfig(paths Paths) RuntimeConfig {
 		if metadata.IsDefined("goal", "confirm_reasoning_effort") && strings.TrimSpace(cfg.Goal.ConfirmReasoningEffort) == "" {
 			normalized.Goal.ConfirmReasoningEffort = ""
 		}
+		if metadata.IsDefined("goal", "interpret_model") && strings.TrimSpace(cfg.Goal.InterpretModel) == "" {
+			normalized.Goal.InterpretModel = ""
+		}
+		if metadata.IsDefined("goal", "interpret_reasoning_effort") && strings.TrimSpace(cfg.Goal.InterpretReasoningEffort) == "" {
+			normalized.Goal.InterpretReasoningEffort = ""
+		}
 		return normalized
 	}
 	return parseRuntimeConfigFallback(path)
@@ -94,11 +106,14 @@ func defaultRuntimeConfig() RuntimeConfig {
 			StopTimeoutSeconds: DefaultStopHookTimeoutSeconds,
 		},
 		Goal: GoalConfig{
-			ConfirmModel:           DefaultGoalConfirmModel,
-			ConfirmReasoningEffort: DefaultGoalConfirmReasoningEffort,
-			ConfirmCommand:         DefaultGoalConfirmCommand(),
-			TimeoutSeconds:         DefaultGoalTimeoutSeconds,
-			MaxOutputBytes:         DefaultGoalMaxOutputBytes,
+			ConfirmModel:             DefaultGoalConfirmModel,
+			ConfirmReasoningEffort:   DefaultGoalConfirmReasoningEffort,
+			ConfirmCommand:           DefaultGoalConfirmCommand(),
+			TimeoutSeconds:           DefaultGoalTimeoutSeconds,
+			InterpretModel:           DefaultGoalInterpretModel,
+			InterpretReasoningEffort: DefaultGoalInterpretReasoningEffort,
+			InterpretTimeoutSeconds:  DefaultGoalInterpretTimeoutSeconds,
+			MaxOutputBytes:           DefaultGoalMaxOutputBytes,
 		},
 		PreLoopContinue: PreLoopContinueConfig{
 			CWD:            PreLoopContinueCWDSession,
@@ -124,12 +139,30 @@ func normalizeRuntimeConfig(cfg RuntimeConfig) RuntimeConfig {
 	if cfg.Goal.TimeoutSeconds <= 0 {
 		cfg.Goal.TimeoutSeconds = DefaultGoalTimeoutSeconds
 	}
-	maxGoalTimeout := cfg.Hooks.StopTimeoutSeconds - GoalHookTimeoutGraceSeconds
-	if maxGoalTimeout <= 0 {
-		maxGoalTimeout = 1
+	if strings.TrimSpace(cfg.Goal.InterpretModel) == "" {
+		cfg.Goal.InterpretModel = DefaultGoalInterpretModel
 	}
-	if cfg.Goal.TimeoutSeconds > maxGoalTimeout {
-		cfg.Goal.TimeoutSeconds = maxGoalTimeout
+	if strings.TrimSpace(cfg.Goal.InterpretReasoningEffort) == "" || !ValidReasoningEffort(cfg.Goal.InterpretReasoningEffort) {
+		cfg.Goal.InterpretReasoningEffort = DefaultGoalInterpretReasoningEffort
+	}
+	if cfg.Goal.InterpretTimeoutSeconds <= 0 {
+		cfg.Goal.InterpretTimeoutSeconds = DefaultGoalInterpretTimeoutSeconds
+	}
+	maxGoalBudget := cfg.Hooks.StopTimeoutSeconds - GoalHookTimeoutGraceSeconds
+	if maxGoalBudget <= 1 {
+		cfg.Goal.TimeoutSeconds = 1
+		cfg.Goal.InterpretTimeoutSeconds = 1
+	} else {
+		if cfg.Goal.TimeoutSeconds >= maxGoalBudget {
+			cfg.Goal.TimeoutSeconds = maxGoalBudget - 1
+		}
+		maxInterpretTimeout := maxGoalBudget - cfg.Goal.TimeoutSeconds
+		if maxInterpretTimeout < 1 {
+			maxInterpretTimeout = 1
+		}
+		if cfg.Goal.InterpretTimeoutSeconds > maxInterpretTimeout {
+			cfg.Goal.InterpretTimeoutSeconds = maxInterpretTimeout
+		}
 	}
 	if cfg.Goal.MaxOutputBytes <= 0 {
 		cfg.Goal.MaxOutputBytes = DefaultGoalMaxOutputBytes

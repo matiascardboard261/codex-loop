@@ -22,14 +22,21 @@ const (
 	DefaultPreLoopContinueMaxOutputBytes = 12000
 	DefaultStopHookTimeoutSeconds        = 2700
 	DefaultGoalTimeoutSeconds            = 2400
+	DefaultGoalInterpretTimeoutSeconds   = 120
 	DefaultGoalMaxOutputBytes            = 12000
 	DefaultGoalConfirmModel              = "gpt-5.5"
 	DefaultGoalConfirmReasoningEffort    = "high"
+	DefaultGoalInterpretModel            = "gpt-5.4-mini"
+	DefaultGoalInterpretReasoningEffort  = "low"
 	GoalHookTimeoutGraceSeconds          = 30
 )
 
 func DefaultGoalConfirmCommand() string {
-	return "codex exec --cd $WORKSPACE_ROOT --ephemeral --yolo --output-schema $SCHEMA_PATH --output-last-message $OUTPUT_PATH $MODEL_ARGV $REASONING_ARGV --skip-git-repo-check -"
+	return "codex exec --cd $WORKSPACE_ROOT --ephemeral --yolo --output-last-message $CONFIRM_OUTPUT_PATH $MODEL_ARGV $REASONING_ARGV --skip-git-repo-check -"
+}
+
+func defaultGoalInterpreterCodexExec() string {
+	return "codex exec --cd $WORKSPACE_ROOT --ephemeral --sandbox read-only --output-schema $INTERPRET_SCHEMA_PATH --output-last-message $INTERPRET_OUTPUT_PATH $INTERPRET_MODEL_ARGV $INTERPRET_REASONING_ARGV --skip-git-repo-check -"
 }
 
 type PreLoopContinueInput struct {

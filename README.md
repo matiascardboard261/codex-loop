@@ -28,7 +28,7 @@ It is designed for release-grade QA, long-running hardening passes, and repeated
 
 - **Three loop modes.** Pick the limiter that fits the work: minimum duration (`min="6h"`), deliberate round count (`rounds="3"`), or independently confirmed goal (`goal="ship only after verification"`).
 - **Activation by header, not flag.** Loops only start when the prompt's first line contains a structured `[[CODEX_LOOP ...]]` header, so day-to-day Codex use is untouched.
-- **Independent goal confirmation.** Goal loops invoke a configurable headless `codex exec` reviewer with structured-output verdicts before deciding whether to continue.
+- **Independent goal confirmation.** Goal loops invoke a configurable headless reviewer that returns normal text, then codex-loop privately interprets that text into a structured verdict.
 - **Pre-continuation context hook.** `pre_loop_continue` runs right before each automatic continuation so the next prompt can carry fresh local context — test summaries, changed files, build status, custom checklists.
 - **Codex lifecycle integration.** Ships as a Codex plugin, contributing `UserPromptSubmit` and `Stop` hooks, and mirrors managed registrations into `~/.codex/hooks.json` for current Codex builds.
 - **Local-first state.** Loop state lives under `~/.codex/codex-loop/`, isolated by Codex `session_id`. Compact verdict metadata lands in `~/.codex/codex-loop/runs.jsonl`.
@@ -143,8 +143,11 @@ stop_timeout_seconds = 2700
 [goal]
 confirm_model = "gpt-5.5"
 confirm_reasoning_effort = "high"
-confirm_command = "codex exec --cd $WORKSPACE_ROOT --ephemeral --yolo --output-schema $SCHEMA_PATH --output-last-message $OUTPUT_PATH $MODEL_ARGV $REASONING_ARGV --skip-git-repo-check -"
+confirm_command = "codex exec --cd $WORKSPACE_ROOT --ephemeral --yolo --output-last-message $CONFIRM_OUTPUT_PATH $MODEL_ARGV $REASONING_ARGV --skip-git-repo-check -"
 timeout_seconds = 2400
+interpret_model = "gpt-5.4-mini"
+interpret_reasoning_effort = "low"
+interpret_timeout_seconds = 120
 max_output_bytes = 12000
 
 [pre_loop_continue]
@@ -161,22 +164,28 @@ max_output_bytes = 12000
 
 ### 🎯 Goal Confirmation
 
-Goal loops run a configurable headless confirmation command inside the `Stop` hook before deciding whether to continue. The default confirmation run uses `codex exec --yolo`, `gpt-5.5`, and `model_reasoning_effort = "high"`. Model and reasoning are separate settings; use `confirm_model = "gpt-5.5"` plus `confirm_reasoning_effort = "xhigh"` rather than a combined model string. Codex documents `--yolo` as full access without sandboxing or approvals; use a custom `confirm_command` when you need a different safety profile or runner.
+Goal loops run a configurable headless confirmation command inside the `Stop` hook before deciding whether to continue. The public confirmation command returns normal text. codex-loop then runs a private interpreter command that converts that text into the internal verdict JSON.
+
+The default confirmation run uses `codex exec --yolo`, `gpt-5.5`, and `model_reasoning_effort = "high"`. Model and reasoning are separate settings; use `confirm_model = "gpt-5.5"` plus `confirm_reasoning_effort = "xhigh"` rather than a combined model string. Codex documents `--yolo` as full access without sandboxing or approvals; use a custom `confirm_command` when you need a different safety profile or runner.
+
+The interpreter always uses `codex exec --sandbox read-only --output-schema`. Its model defaults to `gpt-5.4-mini` and reasoning effort defaults to `low`; users can change only the interpreter model, reasoning effort, and timeout. The interpreter command itself is intentionally not configurable so codex-loop can rely on Codex structured output and the user's existing Codex auth.
 
 **Runtime behavior:**
 
 - `confirm_command` is a shell-like string parsed to argv and executed without an implicit shell.
 - Placeholder values are shell-quoted before parsing so injected values remain literal arguments.
-- The default command runs with `--yolo`, `--ephemeral`, `--output-schema`, and `--output-last-message`.
-- If the confirmation verdict is complete, codex-loop marks the loop completed and emits no continuation prompt.
-- If the verdict is incomplete, invalid, timed out, or the command fails, codex-loop continues with a warning and keeps the loop active.
-- `goal.timeout_seconds` controls the nested confirmation timeout and is normalized to leave time before the outer Stop hook timeout.
-- `goal.max_output_bytes` caps captured confirmation output used for diagnostics.
+- The default confirmation command runs with `--yolo`, `--ephemeral`, and `--output-last-message`; it does not receive an output schema.
+- Custom confirmation commands may write normal prose to `$CONFIRM_OUTPUT_PATH` or stdout.
+- The interpreter command is fixed to `codex exec` and produces the structured verdict internally.
+- If the interpreted verdict is complete, codex-loop marks the loop completed and emits no continuation prompt.
+- If the interpreted verdict is incomplete, invalid, timed out, or either command fails, codex-loop continues with a warning and keeps the loop active.
+- `goal.timeout_seconds` controls the confirmation timeout; `goal.interpret_timeout_seconds` controls the interpreter timeout. Both are normalized to leave time before the outer Stop hook timeout.
+- `goal.max_output_bytes` caps captured confirmation and interpreter output used for prompts and diagnostics.
 - Each confirmation attempt appends compact metadata to `~/.codex/codex-loop/runs.jsonl`.
 
-**Goal command variables:**
+**Confirmation command variables:**
 
-- `$PROMPT`, `$PROMPT_FILE`, `$SCHEMA_PATH`, and `$OUTPUT_PATH` expose the reviewer prompt and structured-output files.
+- `$PROMPT`, `$PROMPT_FILE`, and `$CONFIRM_OUTPUT_PATH` expose the reviewer prompt and plain-text output file.
 - `$MODEL_ARGV` expands to `--model <model>` when a model is configured; `$REASONING_ARGV` expands to `--config model_reasoning_effort="<effort>"` when reasoning is configured.
 - `$MODEL`, `$REASONING_EFFORT`, `$WORKSPACE_ROOT`, `$CWD`, `$SESSION_ID`, `$LOOP_NAME`, `$LOOP_SLUG`, `$RUNS_LOG_PATH`, and `$CODEX_HOME` are also available.
 - The same values are exported with the `CODEX_LOOP_CONFIRM_` prefix.
@@ -285,7 +294,7 @@ Generated note files live in `.release-notes/`. The release PR archives consumed
 
 `codex-loop` itself does not send data to a network service. It reads Codex hook JSON from stdin, writes hook decisions to stdout, and stores loop state locally under `~/.codex/codex-loop/`.
 
-Goal loops intentionally invoke the local `codex exec` command for confirmation, which uses the user's configured Codex provider/auth. The local JSONL log stores compact verdict metadata only; it does not store the full original task prompt, full assistant message, confirmation prompt, or `pre_loop_continue` output.
+Goal loops intentionally invoke the local `codex exec` command for default confirmation and interpretation, which uses the user's configured Codex provider/auth. The local JSONL log stores compact verdict metadata only; it does not store the full original task prompt, full assistant message, confirmation prompt, confirmation review text, interpreter prompt, or `pre_loop_continue` output.
 
 ## 📄 License
 

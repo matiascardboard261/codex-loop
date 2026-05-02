@@ -280,6 +280,9 @@ func GoalContinuationReason(paths Paths, record LoopRecord, result goalCheckResu
 			lines = append(lines, "- next round guidance: "+guidance)
 		}
 	}
+	if reviewText := strings.TrimSpace(result.ReviewText); reviewText != "" {
+		lines = append(lines, "", "Goal confirmation review text:", reviewText)
+	}
 	if aggressive {
 		lines = append(lines, "", "Several turns have ended too quickly. Broaden the scope materially before stopping again.")
 	}

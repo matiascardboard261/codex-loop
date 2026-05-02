@@ -30,50 +30,76 @@ type GoalCheckVerdict struct {
 }
 
 type goalCheckResult struct {
-	Outcome         string
-	Verdict         GoalCheckVerdict
-	Model           string
-	ReasoningEffort string
+	Outcome                  string
+	Verdict                  GoalCheckVerdict
+	ReviewText               string
+	Model                    string
+	ReasoningEffort          string
+	CommandName              string
+	CommandArgCount          int
+	InterpretModel           string
+	InterpretReasoningEffort string
+	InterpretDuration        time.Duration
+	Duration                 time.Duration
+	Warning                  string
+	ErrorSummary             string
+}
+
+type goalCheckFiles struct {
+	ConfirmPromptPath   string
+	ConfirmOutputPath   string
+	InterpretSchemaPath string
+	InterpretOutputPath string
+}
+
+type goalCommandRun struct {
 	CommandName     string
 	CommandArgCount int
+	Stdout          string
+	Stderr          string
+	TimedOut        bool
+	Timeout         time.Duration
 	Duration        time.Duration
-	Warning         string
-	ErrorSummary    string
 }
 
 type goalCheckLogEvent struct {
-	EventName              string   `json:"event_name"`
-	CheckedAt              string   `json:"checked_at"`
-	SessionID              string   `json:"session_id"`
-	LoopName               string   `json:"loop_name"`
-	LoopSlug               string   `json:"loop_slug"`
-	LoopPath               string   `json:"loop_path"`
-	LimitMode              string   `json:"limit_mode"`
-	ContinueCount          int      `json:"continue_count"`
-	GoalCheckCount         int      `json:"goal_check_count"`
-	ConfirmModel           string   `json:"confirm_model,omitempty"`
-	ConfirmReasoning       string   `json:"confirm_reasoning_effort,omitempty"`
-	ConfirmCommand         string   `json:"confirm_command,omitempty"`
-	ConfirmCommandArgCount int      `json:"confirm_command_arg_count,omitempty"`
-	DurationMilliseconds   int64    `json:"duration_ms"`
-	Outcome                string   `json:"outcome"`
-	Confidence             float64  `json:"confidence,omitempty"`
-	Reason                 string   `json:"reason,omitempty"`
-	MissingWork            []string `json:"missing_work,omitempty"`
-	MissingWorkCount       int      `json:"missing_work_count"`
-	Warning                string   `json:"warning,omitempty"`
-	ErrorSummary           string   `json:"error_summary,omitempty"`
-	ContinuationEmitted    bool     `json:"continuation_emitted"`
-	PreLoopContinueActive  bool     `json:"pre_loop_continue_active"`
+	EventName                     string   `json:"event_name"`
+	CheckedAt                     string   `json:"checked_at"`
+	SessionID                     string   `json:"session_id"`
+	LoopName                      string   `json:"loop_name"`
+	LoopSlug                      string   `json:"loop_slug"`
+	LoopPath                      string   `json:"loop_path"`
+	LimitMode                     string   `json:"limit_mode"`
+	ContinueCount                 int      `json:"continue_count"`
+	GoalCheckCount                int      `json:"goal_check_count"`
+	ConfirmModel                  string   `json:"confirm_model,omitempty"`
+	ConfirmReasoning              string   `json:"confirm_reasoning_effort,omitempty"`
+	ConfirmCommand                string   `json:"confirm_command,omitempty"`
+	ConfirmCommandArgCount        int      `json:"confirm_command_arg_count,omitempty"`
+	InterpretModel                string   `json:"interpret_model,omitempty"`
+	InterpretReasoning            string   `json:"interpret_reasoning_effort,omitempty"`
+	InterpretDurationMilliseconds int64    `json:"interpret_duration_ms,omitempty"`
+	DurationMilliseconds          int64    `json:"duration_ms"`
+	Outcome                       string   `json:"outcome"`
+	Confidence                    float64  `json:"confidence,omitempty"`
+	Reason                        string   `json:"reason,omitempty"`
+	MissingWork                   []string `json:"missing_work,omitempty"`
+	MissingWorkCount              int      `json:"missing_work_count"`
+	Warning                       string   `json:"warning,omitempty"`
+	ErrorSummary                  string   `json:"error_summary,omitempty"`
+	ContinuationEmitted           bool     `json:"continuation_emitted"`
+	PreLoopContinueActive         bool     `json:"pre_loop_continue_active"`
 }
 
 func runGoalCheck(ctx context.Context, paths Paths, cfg GoalConfig, payload StopPayload, record LoopRecord, now time.Time) (result goalCheckResult) {
 	started := time.Now()
 	resolved := resolveGoalCheckConfig(cfg, payload, record)
 	result = goalCheckResult{
-		Outcome:         GoalCheckOutcomeError,
-		Model:           resolved.ConfirmModel,
-		ReasoningEffort: resolved.ConfirmReasoningEffort,
+		Outcome:                  GoalCheckOutcomeError,
+		Model:                    resolved.ConfirmModel,
+		ReasoningEffort:          resolved.ConfirmReasoningEffort,
+		InterpretModel:           resolved.InterpretModel,
+		InterpretReasoningEffort: resolved.InterpretReasoningEffort,
 	}
 	defer func() {
 		result.Duration = time.Since(started)
@@ -101,7 +127,7 @@ func runGoalCheck(ctx context.Context, paths Paths, cfg GoalConfig, payload Stop
 		return result
 	}
 	prompt := buildGoalCheckPrompt(record, now)
-	schemaPath, outputPath, promptPath, cleanup, err := prepareGoalCheckFiles(paths, prompt)
+	files, cleanup, err := prepareGoalCheckFiles(paths, prompt)
 	if err != nil {
 		result.Warning = err.Error()
 		result.ErrorSummary = result.Warning
@@ -120,78 +146,116 @@ func runGoalCheck(ctx context.Context, paths Paths, cfg GoalConfig, payload Stop
 		multi["REASONING_ARGV"] = []string{"--config", fmt.Sprintf(`model_reasoning_effort="%s"`, resolved.ConfirmReasoningEffort)}
 	}
 	values := map[string]string{
-		"PROMPT":           prompt,
-		"PROMPT_FILE":      promptPath,
-		"MODEL":            resolved.ConfirmModel,
-		"REASONING_EFFORT": resolved.ConfirmReasoningEffort,
-		"WORKSPACE_ROOT":   absWorkspaceRoot,
-		"CWD":              strings.TrimSpace(record.CWD),
-		"SESSION_ID":       record.SessionID,
-		"LOOP_NAME":        record.Name,
-		"LOOP_SLUG":        record.Slug,
-		"SCHEMA_PATH":      schemaPath,
-		"OUTPUT_PATH":      outputPath,
-		"RUNS_LOG_PATH":    paths.RunsLogPath(),
-		"CODEX_HOME":       paths.CodexHome,
+		"PROMPT":              prompt,
+		"PROMPT_FILE":         files.ConfirmPromptPath,
+		"CONFIRM_OUTPUT_PATH": files.ConfirmOutputPath,
+		"MODEL":               resolved.ConfirmModel,
+		"REASONING_EFFORT":    resolved.ConfirmReasoningEffort,
+		"WORKSPACE_ROOT":      absWorkspaceRoot,
+		"CWD":                 strings.TrimSpace(record.CWD),
+		"SESSION_ID":          record.SessionID,
+		"LOOP_NAME":           record.Name,
+		"LOOP_SLUG":           record.Slug,
+		"RUNS_LOG_PATH":       paths.RunsLogPath(),
+		"CODEX_HOME":          paths.CodexHome,
 	}
-	command, args, env, err := buildConfiguredCommand(resolved.ConfirmCommand, absWorkspaceRoot, commandExpansion{
+	confirmRun, err := runGoalCommand(ctx, resolved.ConfirmCommand, absWorkspaceRoot, prompt, resolved.TimeoutSeconds, resolved.MaxOutputBytes, commandExpansion{
 		Values:    values,
 		Multi:     multi,
 		EnvPrefix: "CODEX_LOOP_CONFIRM_",
 	})
-	if err != nil {
-		result.Warning = err.Error()
-		result.ErrorSummary = result.Warning
-		return result
-	}
-	result.CommandName = filepath.Base(command)
-	result.CommandArgCount = len(args)
-
-	timeout := time.Duration(resolved.TimeoutSeconds) * time.Second
-	runCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(runCtx, command, args...)
-	cmd.Dir = absWorkspaceRoot
-	cmd.Env = env
-	cmd.Stdin = strings.NewReader(prompt)
-	var stdout limitedOutputBuffer
-	var stderr limitedOutputBuffer
-	stdout.limit = resolved.MaxOutputBytes
-	stderr.limit = resolved.MaxOutputBytes
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err = cmd.Run()
-	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+	result.CommandName = confirmRun.CommandName
+	result.CommandArgCount = confirmRun.CommandArgCount
+	if confirmRun.TimedOut {
 		result.Outcome = GoalCheckOutcomeTimeout
-		result.Warning = fmt.Sprintf("goal confirmation timed out after %s", timeout)
+		result.Warning = fmt.Sprintf("goal confirmation timed out after %s", confirmRun.Timeout)
 		result.ErrorSummary = result.Warning
 		return result
 	}
 	if err != nil {
 		result.Warning = fmt.Sprintf("goal confirmation failed: %s", describeCommandError(err))
 		result.ErrorSummary = result.Warning
-		if stderrText := strings.TrimSpace(stderr.String()); stderrText != "" {
+		if stderrText := strings.TrimSpace(confirmRun.Stderr); stderrText != "" {
 			result.ErrorSummary = strings.TrimSpace(result.ErrorSummary + ": " + truncateText(stderrText, resolved.MaxOutputBytes))
 		}
 		return result
 	}
 
-	output, err := readGoalCheckOutput(outputPath, stdout.String())
+	reviewOutput, err := readGoalCheckOutput(files.ConfirmOutputPath, confirmRun.Stdout)
 	if err != nil {
 		result.Outcome = GoalCheckOutcomeInvalidOutput
 		result.Warning = fmt.Sprintf("read goal confirmation output: %v", err)
 		result.ErrorSummary = result.Warning
 		return result
 	}
-	if len(output) > resolved.MaxOutputBytes {
-		output = output[:resolved.MaxOutputBytes]
+	reviewText := strings.TrimSpace(truncateText(string(reviewOutput), resolved.MaxOutputBytes))
+	if reviewText == "" {
+		result.Outcome = GoalCheckOutcomeInvalidOutput
+		result.Warning = "read goal confirmation output: empty review text"
+		result.ErrorSummary = result.Warning
+		return result
 	}
-	verdict, err := decodeGoalVerdict(output)
+	result.ReviewText = reviewText
+
+	interpretPrompt := buildGoalInterpretPrompt(record, now, prompt, reviewText)
+	interpretMulti := map[string][]string{
+		"INTERPRET_MODEL_ARGV":     nil,
+		"INTERPRET_REASONING_ARGV": nil,
+	}
+	if resolved.InterpretModel != "" {
+		interpretMulti["INTERPRET_MODEL_ARGV"] = []string{"--model", resolved.InterpretModel}
+	}
+	if resolved.InterpretReasoningEffort != "" {
+		interpretMulti["INTERPRET_REASONING_ARGV"] = []string{"--config", fmt.Sprintf(`model_reasoning_effort="%s"`, resolved.InterpretReasoningEffort)}
+	}
+	interpretValues := map[string]string{
+		"INTERPRET_SCHEMA_PATH":      files.InterpretSchemaPath,
+		"INTERPRET_OUTPUT_PATH":      files.InterpretOutputPath,
+		"INTERPRET_MODEL":            resolved.InterpretModel,
+		"INTERPRET_REASONING_EFFORT": resolved.InterpretReasoningEffort,
+		"WORKSPACE_ROOT":             absWorkspaceRoot,
+		"CWD":                        strings.TrimSpace(record.CWD),
+		"SESSION_ID":                 record.SessionID,
+		"LOOP_NAME":                  record.Name,
+		"LOOP_SLUG":                  record.Slug,
+		"RUNS_LOG_PATH":              paths.RunsLogPath(),
+		"CODEX_HOME":                 paths.CodexHome,
+	}
+	interpretRun, err := runGoalCommand(ctx, defaultGoalInterpreterCodexExec(), absWorkspaceRoot, interpretPrompt, resolved.InterpretTimeoutSeconds, resolved.MaxOutputBytes, commandExpansion{
+		Values:    interpretValues,
+		Multi:     interpretMulti,
+		EnvPrefix: "CODEX_LOOP_INTERPRET_",
+	})
+	result.InterpretDuration = interpretRun.Duration
+	if interpretRun.TimedOut {
+		result.Outcome = GoalCheckOutcomeTimeout
+		result.Warning = fmt.Sprintf("goal interpretation timed out after %s", interpretRun.Timeout)
+		result.ErrorSummary = result.Warning
+		return result
+	}
+	if err != nil {
+		result.Warning = fmt.Sprintf("goal interpretation failed: %s", describeCommandError(err))
+		result.ErrorSummary = result.Warning
+		if stderrText := strings.TrimSpace(interpretRun.Stderr); stderrText != "" {
+			result.ErrorSummary = strings.TrimSpace(result.ErrorSummary + ": " + truncateText(stderrText, resolved.MaxOutputBytes))
+		}
+		return result
+	}
+
+	interpretOutput, err := readGoalCheckOutput(files.InterpretOutputPath, interpretRun.Stdout)
 	if err != nil {
 		result.Outcome = GoalCheckOutcomeInvalidOutput
-		result.Warning = fmt.Sprintf("decode goal confirmation output: %v", err)
+		result.Warning = fmt.Sprintf("read goal interpretation output: %v", err)
+		result.ErrorSummary = result.Warning
+		return result
+	}
+	if len(interpretOutput) > resolved.MaxOutputBytes {
+		interpretOutput = interpretOutput[:resolved.MaxOutputBytes]
+	}
+	verdict, err := decodeGoalVerdict(interpretOutput)
+	if err != nil {
+		result.Outcome = GoalCheckOutcomeInvalidOutput
+		result.Warning = fmt.Sprintf("decode goal interpretation output: %v", err)
 		result.ErrorSummary = result.Warning
 		return result
 	}
@@ -220,69 +284,137 @@ func resolveGoalCheckConfig(cfg GoalConfig, payload StopPayload, record LoopReco
 	if resolved.TimeoutSeconds <= 0 {
 		resolved.TimeoutSeconds = DefaultGoalTimeoutSeconds
 	}
+	if resolved.InterpretTimeoutSeconds <= 0 {
+		resolved.InterpretTimeoutSeconds = DefaultGoalInterpretTimeoutSeconds
+	}
 	if resolved.MaxOutputBytes <= 0 {
 		resolved.MaxOutputBytes = DefaultGoalMaxOutputBytes
 	}
 	if !ValidReasoningEffort(resolved.ConfirmReasoningEffort) {
 		resolved.ConfirmReasoningEffort = DefaultGoalConfirmReasoningEffort
 	}
+	if !ValidReasoningEffort(resolved.InterpretReasoningEffort) {
+		resolved.InterpretReasoningEffort = DefaultGoalInterpretReasoningEffort
+	}
 	return resolved
 }
 
-func prepareGoalCheckFiles(paths Paths, prompt string) (string, string, string, func(), error) {
-	schemaFile, err := os.CreateTemp(paths.RuntimeRoot(), "goal-schema-*.json")
+func runGoalCommand(ctx context.Context, commandLine string, cwd string, stdin string, timeoutSeconds int, maxOutputBytes int, expansion commandExpansion) (goalCommandRun, error) {
+	command, args, env, err := buildConfiguredCommand(commandLine, cwd, expansion)
 	if err != nil {
-		return "", "", "", func() {}, fmt.Errorf("create goal schema file: %w", err)
+		return goalCommandRun{}, err
 	}
-	outputFile, err := os.CreateTemp(paths.RuntimeRoot(), "goal-output-*.json")
+	result := goalCommandRun{
+		CommandName:     filepath.Base(command),
+		CommandArgCount: len(args),
+		Timeout:         time.Duration(timeoutSeconds) * time.Second,
+	}
+	runCtx, cancel := context.WithTimeout(ctx, result.Timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(runCtx, command, args...)
+	cmd.Dir = cwd
+	cmd.Env = env
+	cmd.Stdin = strings.NewReader(stdin)
+	var stdout limitedOutputBuffer
+	var stderr limitedOutputBuffer
+	stdout.limit = maxOutputBytes
+	stderr.limit = maxOutputBytes
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	started := time.Now()
+	err = cmd.Run()
+	result.Duration = time.Since(started)
+	result.Stdout = stdout.String()
+	result.Stderr = stderr.String()
+	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+		result.TimedOut = true
+		return result, runCtx.Err()
+	}
+	return result, err
+}
+
+func prepareGoalCheckFiles(paths Paths, prompt string) (goalCheckFiles, func(), error) {
+	schemaFile, err := os.CreateTemp(paths.RuntimeRoot(), "goal-interpret-schema-*.json")
+	if err != nil {
+		return goalCheckFiles{}, func() {}, fmt.Errorf("create goal interpretation schema file: %w", err)
+	}
+	interpretOutputFile, err := os.CreateTemp(paths.RuntimeRoot(), "goal-interpret-output-*.json")
 	if err != nil {
 		_ = schemaFile.Close()
 		_ = os.Remove(schemaFile.Name())
-		return "", "", "", func() {}, fmt.Errorf("create goal output file: %w", err)
+		return goalCheckFiles{}, func() {}, fmt.Errorf("create goal interpretation output file: %w", err)
 	}
-	promptFile, err := os.CreateTemp(paths.RuntimeRoot(), "goal-prompt-*.txt")
+	confirmOutputFile, err := os.CreateTemp(paths.RuntimeRoot(), "goal-confirm-output-*.txt")
 	if err != nil {
 		_ = schemaFile.Close()
-		_ = outputFile.Close()
+		_ = interpretOutputFile.Close()
 		_ = os.Remove(schemaFile.Name())
-		_ = os.Remove(outputFile.Name())
-		return "", "", "", func() {}, fmt.Errorf("create goal prompt file: %w", err)
+		_ = os.Remove(interpretOutputFile.Name())
+		return goalCheckFiles{}, func() {}, fmt.Errorf("create goal confirmation output file: %w", err)
+	}
+	promptFile, err := os.CreateTemp(paths.RuntimeRoot(), "goal-confirm-prompt-*.txt")
+	if err != nil {
+		_ = schemaFile.Close()
+		_ = interpretOutputFile.Close()
+		_ = confirmOutputFile.Close()
+		_ = os.Remove(schemaFile.Name())
+		_ = os.Remove(interpretOutputFile.Name())
+		_ = os.Remove(confirmOutputFile.Name())
+		return goalCheckFiles{}, func() {}, fmt.Errorf("create goal confirmation prompt file: %w", err)
 	}
 	cleanup := func() {
 		_ = os.Remove(schemaFile.Name())
-		_ = os.Remove(outputFile.Name())
+		_ = os.Remove(interpretOutputFile.Name())
+		_ = os.Remove(confirmOutputFile.Name())
 		_ = os.Remove(promptFile.Name())
 	}
 	if _, err := schemaFile.WriteString(goalCheckOutputSchema); err != nil {
 		_ = schemaFile.Close()
-		_ = outputFile.Close()
+		_ = interpretOutputFile.Close()
+		_ = confirmOutputFile.Close()
 		_ = promptFile.Close()
 		cleanup()
-		return "", "", "", func() {}, fmt.Errorf("write goal schema file: %w", err)
+		return goalCheckFiles{}, func() {}, fmt.Errorf("write goal interpretation schema file: %w", err)
 	}
 	if _, err := promptFile.WriteString(prompt); err != nil {
 		_ = schemaFile.Close()
-		_ = outputFile.Close()
+		_ = interpretOutputFile.Close()
+		_ = confirmOutputFile.Close()
 		_ = promptFile.Close()
 		cleanup()
-		return "", "", "", func() {}, fmt.Errorf("write goal prompt file: %w", err)
+		return goalCheckFiles{}, func() {}, fmt.Errorf("write goal confirmation prompt file: %w", err)
 	}
 	if err := schemaFile.Close(); err != nil {
-		_ = outputFile.Close()
+		_ = interpretOutputFile.Close()
+		_ = confirmOutputFile.Close()
 		_ = promptFile.Close()
 		cleanup()
-		return "", "", "", func() {}, fmt.Errorf("close goal schema file: %w", err)
+		return goalCheckFiles{}, func() {}, fmt.Errorf("close goal interpretation schema file: %w", err)
 	}
-	if err := outputFile.Close(); err != nil {
+	if err := interpretOutputFile.Close(); err != nil {
+		_ = confirmOutputFile.Close()
 		_ = promptFile.Close()
 		cleanup()
-		return "", "", "", func() {}, fmt.Errorf("close goal output file: %w", err)
+		return goalCheckFiles{}, func() {}, fmt.Errorf("close goal interpretation output file: %w", err)
+	}
+	if err := confirmOutputFile.Close(); err != nil {
+		_ = promptFile.Close()
+		cleanup()
+		return goalCheckFiles{}, func() {}, fmt.Errorf("close goal confirmation output file: %w", err)
 	}
 	if err := promptFile.Close(); err != nil {
 		cleanup()
-		return "", "", "", func() {}, fmt.Errorf("close goal prompt file: %w", err)
+		return goalCheckFiles{}, func() {}, fmt.Errorf("close goal confirmation prompt file: %w", err)
 	}
-	return schemaFile.Name(), outputFile.Name(), promptFile.Name(), cleanup, nil
+	files := goalCheckFiles{
+		ConfirmPromptPath:   promptFile.Name(),
+		ConfirmOutputPath:   confirmOutputFile.Name(),
+		InterpretSchemaPath: schemaFile.Name(),
+		InterpretOutputPath: interpretOutputFile.Name(),
+	}
+	return files, cleanup, nil
 }
 
 func buildGoalCheckPrompt(record LoopRecord, now time.Time) string {
@@ -302,7 +434,8 @@ func buildGoalCheckPrompt(record LoopRecord, now time.Time) string {
 		"You are the codex-loop goal confirmation reviewer.",
 		"Inspect the current workspace in read-only mode and decide whether the original task is actually complete.",
 		"Do not edit files, run formatters that write files, apply patches, or perform destructive actions.",
-		"Return only JSON matching the provided schema.",
+		"Return concise plain text, not JSON.",
+		"State whether the task appears complete, cite concrete evidence, list missing work if any, and give next steps if incomplete.",
 		"",
 		fmt.Sprintf("Checked at: %s", ISOFormat(now)),
 		fmt.Sprintf("Loop name: %s", record.Name),
@@ -321,10 +454,58 @@ func buildGoalCheckPrompt(record LoopRecord, now time.Time) string {
 	lines = append(lines,
 		"",
 		"Decision rules:",
-		"- Set completed to true only when the requested work is actually done and no required follow-up remains.",
-		"- Use confidence from 0 to 1.",
-		"- If incomplete, list concrete missing work and provide next_round_guidance.",
-		"- If uncertain, set completed to false.",
+		"- Say the work is complete only when the requested work is actually done and no required follow-up remains.",
+		"- If incomplete, list concrete missing work and next-round guidance.",
+		"- If uncertain, say so clearly and describe what evidence is missing.",
+	)
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func buildGoalInterpretPrompt(record LoopRecord, now time.Time, confirmationPrompt string, reviewText string) string {
+	goalText := ""
+	if record.GoalText != nil {
+		goalText = strings.TrimSpace(*record.GoalText)
+	}
+	task := strings.TrimSpace(record.TaskPrompt)
+	if task == "" {
+		task = strings.TrimSpace(record.ActivationPrompt)
+	}
+	latestMessage := ""
+	if record.LastAssistantMessage != nil {
+		latestMessage = strings.TrimSpace(*record.LastAssistantMessage)
+	}
+	lines := []string{
+		"You are the private codex-loop goal confirmation interpreter.",
+		"Convert the plain-text reviewer output into JSON matching the provided schema.",
+		"Use only the task context and reviewer output below. Do not inspect files, run commands, or infer hidden evidence.",
+		"Return only JSON matching the provided schema.",
+		"",
+		fmt.Sprintf("Checked at: %s", ISOFormat(now)),
+		fmt.Sprintf("Loop name: %s", record.Name),
+		fmt.Sprintf("Loop slug: %s", record.Slug),
+	}
+	if goalText != "" {
+		lines = append(lines, "", "Additional goal:", goalText)
+	}
+	if task != "" {
+		lines = append(lines, "", "Original task:", task)
+	}
+	if latestMessage != "" {
+		lines = append(lines, "", "Latest assistant message:", latestMessage)
+	}
+	if confirmationPrompt != "" {
+		lines = append(lines, "", "Reviewer instructions that produced the text:", confirmationPrompt)
+	}
+	lines = append(lines,
+		"",
+		"Reviewer output:",
+		reviewText,
+		"",
+		"Interpretation rules:",
+		"- Set completed=true only when the reviewer clearly says the work is complete and cites adequate evidence.",
+		"- Set completed=false when the reviewer reports missing work, uncertainty, failed checks, absent evidence, or ambiguous status.",
+		"- Preserve concrete missing work and next-round guidance from the reviewer when available.",
+		"- Use confidence from 0 to 1 based on how clearly the reviewer supports the decision.",
 	)
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
@@ -376,29 +557,32 @@ func readGoalCheckOutput(outputPath string, stdout string) ([]byte, error) {
 
 func AppendGoalCheckLog(paths Paths, loopPath string, record LoopRecord, result goalCheckResult, continuationEmitted bool, preLoopContinueActive bool, checkedAt time.Time) error {
 	event := goalCheckLogEvent{
-		EventName:              "goal_check",
-		CheckedAt:              ISOFormat(checkedAt),
-		SessionID:              record.SessionID,
-		LoopName:               record.Name,
-		LoopSlug:               record.Slug,
-		LoopPath:               loopPath,
-		LimitMode:              ResolveLimitMode(record),
-		ContinueCount:          record.ContinueCount,
-		GoalCheckCount:         record.GoalCheckCount,
-		ConfirmModel:           result.Model,
-		ConfirmReasoning:       result.ReasoningEffort,
-		ConfirmCommand:         result.CommandName,
-		ConfirmCommandArgCount: result.CommandArgCount,
-		DurationMilliseconds:   result.Duration.Milliseconds(),
-		Outcome:                result.Outcome,
-		Confidence:             result.Verdict.Confidence,
-		Reason:                 truncateText(result.Verdict.Reason, 1000),
-		MissingWork:            truncateStringSlice(result.Verdict.MissingWork, 20, 500),
-		MissingWorkCount:       len(result.Verdict.MissingWork),
-		Warning:                truncateText(result.Warning, 1000),
-		ErrorSummary:           truncateText(result.ErrorSummary, 1000),
-		ContinuationEmitted:    continuationEmitted,
-		PreLoopContinueActive:  preLoopContinueActive,
+		EventName:                     "goal_check",
+		CheckedAt:                     ISOFormat(checkedAt),
+		SessionID:                     record.SessionID,
+		LoopName:                      record.Name,
+		LoopSlug:                      record.Slug,
+		LoopPath:                      loopPath,
+		LimitMode:                     ResolveLimitMode(record),
+		ContinueCount:                 record.ContinueCount,
+		GoalCheckCount:                record.GoalCheckCount,
+		ConfirmModel:                  result.Model,
+		ConfirmReasoning:              result.ReasoningEffort,
+		ConfirmCommand:                result.CommandName,
+		ConfirmCommandArgCount:        result.CommandArgCount,
+		InterpretModel:                result.InterpretModel,
+		InterpretReasoning:            result.InterpretReasoningEffort,
+		InterpretDurationMilliseconds: result.InterpretDuration.Milliseconds(),
+		DurationMilliseconds:          result.Duration.Milliseconds(),
+		Outcome:                       result.Outcome,
+		Confidence:                    result.Verdict.Confidence,
+		Reason:                        truncateText(result.Verdict.Reason, 1000),
+		MissingWork:                   truncateStringSlice(result.Verdict.MissingWork, 20, 500),
+		MissingWorkCount:              len(result.Verdict.MissingWork),
+		Warning:                       truncateText(result.Warning, 1000),
+		ErrorSummary:                  truncateText(result.ErrorSummary, 1000),
+		ContinuationEmitted:           continuationEmitted,
+		PreLoopContinueActive:         preLoopContinueActive,
 	}
 	return AppendJSONL(paths.RunsLogPath(), event)
 }

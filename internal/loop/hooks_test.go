@@ -187,12 +187,19 @@ func TestStopGoalModeCompletesWhenConfirmed(t *testing.T) {
 	argsPath := filepath.Join(t.TempDir(), "args.txt")
 	stdinPath := filepath.Join(t.TempDir(), "stdin.txt")
 	fakeCodex := writeFakeCodex(t)
+	interpreterArgsPath := filepath.Join(t.TempDir(), "interpreter-args.txt")
+	interpreterStdinPath := filepath.Join(t.TempDir(), "interpreter-stdin.txt")
+	installFakeInterpreterCodex(t)
 	t.Setenv("FAKE_CODEX_ARGS", argsPath)
 	t.Setenv("FAKE_CODEX_STDIN", stdinPath)
-	t.Setenv("FAKE_CODEX_VERDICT", `{"completed":true,"confidence":0.98,"reason":"all work is verified","missing_work":[],"next_round_guidance":""}`)
+	t.Setenv("FAKE_CODEX_REVIEW", "The task is complete. Evidence: all work is verified.")
+	t.Setenv("FAKE_INTERPRET_ARGS", interpreterArgsPath)
+	t.Setenv("FAKE_INTERPRET_STDIN", interpreterStdinPath)
+	t.Setenv("FAKE_INTERPRET_VERDICT", `{"completed":true,"confidence":0.98,"reason":"all work is verified","missing_work":[],"next_round_guidance":""}`)
 	writeRuntimeConfig(t, paths, `[goal]
 `+fakeGoalConfirmCommandConfig(fakeCodex)+`
 timeout_seconds = 5
+interpret_timeout_seconds = 5
 `)
 
 	start := fixedTime()
@@ -219,8 +226,13 @@ timeout_seconds = 5
 	assertContains(t, readText(t, argsPath), "--model\ngpt-5.5")
 	assertContains(t, readText(t, argsPath), `model_reasoning_effort="high"`)
 	assertContains(t, readText(t, argsPath), "--yolo")
+	assertNotContains(t, readText(t, argsPath), "--output-schema")
 	assertNotContains(t, readText(t, stdinPath), ActivationPrefix)
+	assertContains(t, readText(t, interpreterArgsPath), "--model\ngpt-5.4-mini")
+	assertContains(t, readText(t, interpreterArgsPath), "--output-schema")
+	assertContains(t, readText(t, interpreterStdinPath), "The task is complete. Evidence: all work is verified.")
 	assertContains(t, readText(t, paths.RunsLogPath()), `"outcome":"completed"`)
+	assertContains(t, readText(t, paths.RunsLogPath()), `"interpret_model":"gpt-5.4-mini"`)
 }
 
 func TestStopGoalModeContinuesWhenIncompleteAndRunsPreLoopContinue(t *testing.T) {
@@ -230,12 +242,15 @@ func TestStopGoalModeContinuesWhenIncompleteAndRunsPreLoopContinue(t *testing.T)
 		t.Fatalf("create repo root: %v", err)
 	}
 	fakeCodex := writeFakeCodex(t)
+	installFakeInterpreterCodex(t)
 	t.Setenv("FAKE_CODEX_ARGS", filepath.Join(t.TempDir(), "args.txt"))
 	t.Setenv("FAKE_CODEX_STDIN", filepath.Join(t.TempDir(), "stdin.txt"))
-	t.Setenv("FAKE_CODEX_VERDICT", `{"completed":false,"confidence":0.35,"reason":"tests are missing","missing_work":["run integration tests"],"next_round_guidance":"add real verification"}`)
+	t.Setenv("FAKE_CODEX_REVIEW", "The task is not complete. Missing work: run integration tests.")
+	t.Setenv("FAKE_INTERPRET_VERDICT", `{"completed":false,"confidence":0.35,"reason":"tests are missing","missing_work":["run integration tests"],"next_round_guidance":"add real verification"}`)
 	writeRuntimeConfig(t, paths, `[goal]
 `+fakeGoalConfirmCommandConfig(fakeCodex)+`
 timeout_seconds = 5
+interpret_timeout_seconds = 5
 
 [pre_loop_continue]
 command = "/bin/sh -c 'printf pre-loop-context'"
@@ -256,6 +271,8 @@ command = "/bin/sh -c 'printf pre-loop-context'"
 	reason := result["reason"].(string)
 	assertContains(t, reason, "Goal confirmation verdict:")
 	assertContains(t, reason, "run integration tests")
+	assertContains(t, reason, "Goal confirmation review text:")
+	assertContains(t, reason, "The task is not complete. Missing work: run integration tests.")
 	assertContains(t, reason, "pre_loop_continue output:")
 	assertContains(t, reason, "pre-loop-context")
 	updated := readLoop(t, path)
@@ -279,7 +296,7 @@ func TestStopGoalModeContinuesOnConfirmationFailure(t *testing.T) {
 	t.Setenv("FAKE_CODEX_ARGS", filepath.Join(t.TempDir(), "args.txt"))
 	t.Setenv("FAKE_CODEX_STDIN", filepath.Join(t.TempDir(), "stdin.txt"))
 	t.Setenv("FAKE_CODEX_EXIT", "7")
-	t.Setenv("FAKE_CODEX_VERDICT", `{"completed":false,"confidence":0,"reason":"not used","missing_work":[],"next_round_guidance":""}`)
+	t.Setenv("FAKE_CODEX_REVIEW", "not used")
 	writeRuntimeConfig(t, paths, `[goal]
 `+fakeGoalConfirmCommandConfig(fakeCodex)+`
 timeout_seconds = 5
@@ -308,14 +325,17 @@ func TestStopGoalModeUsesPayloadModelWhenConfigBlankAndOmitsBlankReasoning(t *te
 	}
 	argsPath := filepath.Join(t.TempDir(), "args.txt")
 	fakeCodex := writeFakeCodex(t)
+	installFakeInterpreterCodex(t)
 	t.Setenv("FAKE_CODEX_ARGS", argsPath)
 	t.Setenv("FAKE_CODEX_STDIN", filepath.Join(t.TempDir(), "stdin.txt"))
-	t.Setenv("FAKE_CODEX_VERDICT", `{"completed":false,"confidence":0.5,"reason":"still checking","missing_work":["more evidence"],"next_round_guidance":"continue"}`)
+	t.Setenv("FAKE_CODEX_REVIEW", "The task needs more evidence before completion.")
+	t.Setenv("FAKE_INTERPRET_VERDICT", `{"completed":false,"confidence":0.5,"reason":"still checking","missing_work":["more evidence"],"next_round_guidance":"continue"}`)
 	writeRuntimeConfig(t, paths, `[goal]
 confirm_model = ""
 confirm_reasoning_effort = ""
 `+fakeGoalConfirmCommandConfig(fakeCodex)+`
 timeout_seconds = 5
+interpret_timeout_seconds = 5
 `)
 
 	start := fixedTime()
@@ -343,7 +363,7 @@ func TestStopGoalModeTimesOutConfirmation(t *testing.T) {
 	t.Setenv("FAKE_CODEX_ARGS", filepath.Join(t.TempDir(), "args.txt"))
 	t.Setenv("FAKE_CODEX_STDIN", filepath.Join(t.TempDir(), "stdin.txt"))
 	t.Setenv("FAKE_CODEX_SLEEP", "2")
-	t.Setenv("FAKE_CODEX_VERDICT", `{"completed":true,"confidence":1,"reason":"late","missing_work":[],"next_round_guidance":""}`)
+	t.Setenv("FAKE_CODEX_REVIEW", "late")
 	writeRuntimeConfig(t, paths, `[goal]
 `+fakeGoalConfirmCommandConfig(fakeCodex)+`
 timeout_seconds = 1
@@ -362,7 +382,43 @@ timeout_seconds = 1
 	assertContains(t, readText(t, paths.RunsLogPath()), `"outcome":"timeout"`)
 }
 
-func TestStopGoalModeCustomCommandCanReturnVerdictOnStdout(t *testing.T) {
+func TestStopGoalModeContinuesOnInterpretationInvalidOutput(t *testing.T) {
+	paths := mustPaths(t)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("create repo root: %v", err)
+	}
+	fakeCodex := writeFakeCodex(t)
+	installFakeInterpreterCodex(t)
+	review := "The task is not complete. Missing work: run release verification."
+	t.Setenv("FAKE_CODEX_REVIEW", review)
+	t.Setenv("FAKE_INTERPRET_VERDICT", "not-json")
+	writeRuntimeConfig(t, paths, `[goal]
+`+fakeGoalConfirmCommandConfig(fakeCodex)+`
+timeout_seconds = 5
+interpret_timeout_seconds = 5
+`)
+
+	start := fixedTime()
+	writeLoop(t, paths, "sess-1", repoRoot, `[[CODEX_LOOP name="goal-qa" goal="verify release"]]`+"\nRun the QA task.", start)
+	result, err := HandleStop(context.Background(), paths, StopPayload{SessionID: "sess-1", CWD: repoRoot}, start.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("handle stop: %v", err)
+	}
+	if result == nil || result["decision"] != "block" {
+		t.Fatalf("expected continuation, got %#v", result)
+	}
+	reason := result["reason"].(string)
+	assertContains(t, reason, "Goal confirmation warning:")
+	assertContains(t, reason, "decode goal interpretation output")
+	assertContains(t, reason, "Goal confirmation review text:")
+	assertContains(t, reason, review)
+	logText := readText(t, paths.RunsLogPath())
+	assertContains(t, logText, `"outcome":"invalid_output"`)
+	assertNotContains(t, logText, review)
+}
+
+func TestStopGoalModeCustomCommandCanReturnReviewOnStdout(t *testing.T) {
 	paths := mustPaths(t)
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
@@ -372,12 +428,16 @@ func TestStopGoalModeCustomCommandCanReturnVerdictOnStdout(t *testing.T) {
 	promptFileCopyPath := filepath.Join(t.TempDir(), "prompt-file.txt")
 	stdinPath := filepath.Join(t.TempDir(), "stdin.txt")
 	fakeConfirm := writeFakeStdoutConfirm(t)
+	installFakeInterpreterCodex(t)
 	t.Setenv("FAKE_CONFIRM_PROMPT_ARG", promptArgPath)
 	t.Setenv("FAKE_CONFIRM_PROMPT_FILE_COPY", promptFileCopyPath)
 	t.Setenv("FAKE_CONFIRM_STDIN", stdinPath)
+	t.Setenv("FAKE_CONFIRM_REVIEW", "This is complete based on stdout review evidence.")
+	t.Setenv("FAKE_INTERPRET_VERDICT", `{"completed":true,"confidence":0.92,"reason":"stdout review","missing_work":[],"next_round_guidance":""}`)
 	writeRuntimeConfig(t, paths, `[goal]
 confirm_command = "`+fakeConfirm+` $PROMPT $PROMPT_FILE"
 timeout_seconds = 5
+interpret_timeout_seconds = 5
 `)
 
 	start := fixedTime()
@@ -387,7 +447,7 @@ timeout_seconds = 5
 		t.Fatalf("handle stop: %v", err)
 	}
 	if result != nil {
-		t.Fatalf("expected stdout verdict to complete goal, got %#v", result)
+		t.Fatalf("expected stdout review to complete goal, got %#v", result)
 	}
 	updated := readLoop(t, path)
 	if updated.Status != StatusCompleted {
@@ -807,7 +867,7 @@ func writeRuntimeConfig(t *testing.T, paths Paths, content string) {
 }
 
 func fakeGoalConfirmCommandConfig(fakeCodex string) string {
-	return `confirm_command = "` + fakeCodex + ` exec --yolo --output-schema $SCHEMA_PATH --output-last-message $OUTPUT_PATH $MODEL_ARGV $REASONING_ARGV --skip-git-repo-check -"`
+	return `confirm_command = "` + fakeCodex + ` exec --yolo --output-last-message $CONFIRM_OUTPUT_PATH $MODEL_ARGV $REASONING_ARGV --skip-git-repo-check -"`
 }
 
 func writeFakeCodex(t *testing.T) string {
@@ -838,7 +898,7 @@ if [ -n "${FAKE_CODEX_SLEEP:-}" ]; then
   sleep "$FAKE_CODEX_SLEEP"
 fi
 if [ -n "$out" ]; then
-  printf '%s\n' "${FAKE_CODEX_VERDICT:-}" > "$out"
+  printf '%s\n' "${FAKE_CODEX_REVIEW:-}" > "$out"
 fi
 exit "${FAKE_CODEX_EXIT:-0}"
 `
@@ -846,6 +906,45 @@ exit "${FAKE_CODEX_EXIT:-0}"
 		t.Fatalf("write fake codex: %v", err)
 	}
 	return path
+}
+
+func installFakeInterpreterCodex(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "codex")
+	script := `#!/bin/sh
+set -eu
+out=""
+prev=""
+if [ -n "${FAKE_INTERPRET_ARGS:-}" ]; then
+  : > "$FAKE_INTERPRET_ARGS"
+fi
+for arg in "$@"; do
+  if [ -n "${FAKE_INTERPRET_ARGS:-}" ]; then
+    printf '%s\n' "$arg" >> "$FAKE_INTERPRET_ARGS"
+  fi
+  if [ "$prev" = "--output-last-message" ]; then
+    out="$arg"
+  fi
+  prev="$arg"
+done
+if [ -n "${FAKE_INTERPRET_STDIN:-}" ]; then
+  cat > "$FAKE_INTERPRET_STDIN"
+else
+  cat >/dev/null
+fi
+if [ -n "${FAKE_INTERPRET_SLEEP:-}" ]; then
+  sleep "$FAKE_INTERPRET_SLEEP"
+fi
+if [ -n "$out" ]; then
+  printf '%s\n' "${FAKE_INTERPRET_VERDICT:-}" > "$out"
+fi
+exit "${FAKE_INTERPRET_EXIT:-0}"
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake interpreter codex: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 func writeFakeStdoutConfirm(t *testing.T) string {
@@ -864,7 +963,7 @@ if [ -n "${FAKE_CONFIRM_STDIN:-}" ]; then
 else
   cat >/dev/null
 fi
-printf '%s\n' '{"completed":true,"confidence":0.92,"reason":"stdout verdict","missing_work":[],"next_round_guidance":""}'
+printf '%s\n' "${FAKE_CONFIRM_REVIEW:-The task is complete based on stdout review.}"
 `
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake stdout confirm: %v", err)

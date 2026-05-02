@@ -19,6 +19,12 @@
       "skillPath": "skills/context7/SKILL.md",
       "computedHash": "23f0178420043f01cd0f00745eb06eaac6f3eee4ef58f87f1ae353c2a408f79c"
     },
+    "copywriting": {
+      "source": "pedronauck/skills",
+      "sourceType": "github",
+      "skillPath": "skills/copywriting/SKILL.md",
+      "computedHash": "a4d6bf88420121e1a566be53f88380a3a8fd9eaafc48d6d268d9992838663b28"
+    },
     "exa-web-search-free": {
       "source": "pedronauck/skills",
       "sourceType": "github",
@@ -42,6 +48,12 @@
       "sourceType": "github",
       "skillPath": "skills/qa-report/SKILL.md",
       "computedHash": "231866d5f491bb0f4dcc3c999362a942bd2e26b5b9289c1ced66bc8433a3e2c4"
+    },
+    "skill-best-practices": {
+      "source": "pedronauck/skills",
+      "sourceType": "github",
+      "skillPath": "skills/skill-best-practices/SKILL.md",
+      "computedHash": "b39b873b9becf59f9a515809efd08c0547cd94c0296873032d3206705189b2ab"
     }
   }
 }

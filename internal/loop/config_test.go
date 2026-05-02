@@ -31,6 +31,15 @@ func TestRuntimeConfigDefaultsPreLoopContinue(t *testing.T) {
 	if cfg.Goal.ConfirmReasoningEffort != DefaultGoalConfirmReasoningEffort {
 		t.Fatalf("expected goal reasoning %q, got %q", DefaultGoalConfirmReasoningEffort, cfg.Goal.ConfirmReasoningEffort)
 	}
+	if cfg.Goal.InterpretModel != DefaultGoalInterpretModel {
+		t.Fatalf("expected goal interpreter model %q, got %q", DefaultGoalInterpretModel, cfg.Goal.InterpretModel)
+	}
+	if cfg.Goal.InterpretReasoningEffort != DefaultGoalInterpretReasoningEffort {
+		t.Fatalf("expected goal interpreter reasoning %q, got %q", DefaultGoalInterpretReasoningEffort, cfg.Goal.InterpretReasoningEffort)
+	}
+	if cfg.Goal.InterpretTimeoutSeconds != DefaultGoalInterpretTimeoutSeconds {
+		t.Fatalf("expected goal interpreter timeout %d, got %d", DefaultGoalInterpretTimeoutSeconds, cfg.Goal.InterpretTimeoutSeconds)
+	}
 }
 
 func TestRuntimeConfigParsesPreLoopContinue(t *testing.T) {
@@ -65,19 +74,22 @@ func TestRuntimeConfigParsesGoalAndHookSettings(t *testing.T) {
 
 	paths := mustPaths(t)
 	writeRuntimeConfig(t, paths, `[hooks]
-stop_timeout_seconds = 120
+stop_timeout_seconds = 160
 
 [goal]
 confirm_model = "gpt-5.4"
 confirm_reasoning_effort = "xhigh"
 confirm_command = "bin/codex exec $MODEL_ARGV $REASONING_ARGV $PROMPT_FILE"
 timeout_seconds = 90
+interpret_model = "gpt-5.4-mini"
+interpret_reasoning_effort = "medium"
+interpret_timeout_seconds = 20
 max_output_bytes = 77
 `)
 
 	cfg := LoadRuntimeConfig(paths)
 
-	if cfg.Hooks.StopTimeoutSeconds != 120 {
+	if cfg.Hooks.StopTimeoutSeconds != 160 {
 		t.Fatalf("unexpected stop timeout %d", cfg.Hooks.StopTimeoutSeconds)
 	}
 	if cfg.Goal.ConfirmModel != "gpt-5.4" {
@@ -92,6 +104,15 @@ max_output_bytes = 77
 	if cfg.Goal.TimeoutSeconds != 90 {
 		t.Fatalf("unexpected goal timeout %d", cfg.Goal.TimeoutSeconds)
 	}
+	if cfg.Goal.InterpretModel != "gpt-5.4-mini" {
+		t.Fatalf("unexpected interpreter model %q", cfg.Goal.InterpretModel)
+	}
+	if cfg.Goal.InterpretReasoningEffort != "medium" {
+		t.Fatalf("unexpected interpreter reasoning %q", cfg.Goal.InterpretReasoningEffort)
+	}
+	if cfg.Goal.InterpretTimeoutSeconds != 20 {
+		t.Fatalf("unexpected interpreter timeout %d", cfg.Goal.InterpretTimeoutSeconds)
+	}
 	if cfg.Goal.MaxOutputBytes != 77 {
 		t.Fatalf("unexpected max output %d", cfg.Goal.MaxOutputBytes)
 	}
@@ -104,6 +125,8 @@ func TestRuntimeConfigAllowsBlankGoalModelAndReasoning(t *testing.T) {
 	writeRuntimeConfig(t, paths, `[goal]
 confirm_model = ""
 confirm_reasoning_effort = ""
+interpret_model = ""
+interpret_reasoning_effort = ""
 `)
 
 	cfg := LoadRuntimeConfig(paths)
@@ -113,6 +136,12 @@ confirm_reasoning_effort = ""
 	}
 	if cfg.Goal.ConfirmReasoningEffort != "" {
 		t.Fatalf("expected blank goal reasoning, got %q", cfg.Goal.ConfirmReasoningEffort)
+	}
+	if cfg.Goal.InterpretModel != "" {
+		t.Fatalf("expected blank goal interpreter model, got %q", cfg.Goal.InterpretModel)
+	}
+	if cfg.Goal.InterpretReasoningEffort != "" {
+		t.Fatalf("expected blank goal interpreter reasoning, got %q", cfg.Goal.InterpretReasoningEffort)
 	}
 }
 
@@ -130,6 +159,22 @@ func TestRuntimeConfigDefaultGoalConfirmCommandUsesYolo(t *testing.T) {
 	if !strings.Contains(cfg.Goal.ConfirmCommand, "$REASONING_ARGV") {
 		t.Fatalf("expected default confirm command to include reasoning argv placeholder, got %#v", cfg.Goal.ConfirmCommand)
 	}
+	if strings.Contains(cfg.Goal.ConfirmCommand, "--output-schema") {
+		t.Fatalf("expected default confirm command to return text without structured output, got %#v", cfg.Goal.ConfirmCommand)
+	}
+	if !strings.Contains(cfg.Goal.ConfirmCommand, "$CONFIRM_OUTPUT_PATH") {
+		t.Fatalf("expected default confirm command to include confirmation output placeholder, got %#v", cfg.Goal.ConfirmCommand)
+	}
+	interpretCommand := defaultGoalInterpreterCodexExec()
+	if !strings.Contains(interpretCommand, "--output-schema") {
+		t.Fatalf("expected fixed interpreter command to include structured output, got %#v", interpretCommand)
+	}
+	if !strings.Contains(interpretCommand, "$INTERPRET_SCHEMA_PATH") {
+		t.Fatalf("expected fixed interpreter command to include interpreter schema placeholder, got %#v", interpretCommand)
+	}
+	if !strings.Contains(interpretCommand, "$INTERPRET_OUTPUT_PATH") {
+		t.Fatalf("expected fixed interpreter command to include interpreter output placeholder, got %#v", interpretCommand)
+	}
 }
 
 func TestRuntimeConfigNormalizesInvalidGoalValues(t *testing.T) {
@@ -142,6 +187,8 @@ stop_timeout_seconds = 40
 [goal]
 confirm_reasoning_effort = "invalid"
 timeout_seconds = 100
+interpret_reasoning_effort = "also-invalid"
+interpret_timeout_seconds = 100
 max_output_bytes = 0
 `)
 
@@ -150,8 +197,14 @@ max_output_bytes = 0
 	if cfg.Goal.ConfirmReasoningEffort != DefaultGoalConfirmReasoningEffort {
 		t.Fatalf("expected default reasoning, got %q", cfg.Goal.ConfirmReasoningEffort)
 	}
-	if cfg.Goal.TimeoutSeconds != 10 {
-		t.Fatalf("expected goal timeout normalized to 10, got %d", cfg.Goal.TimeoutSeconds)
+	if cfg.Goal.TimeoutSeconds != 9 {
+		t.Fatalf("expected goal timeout normalized to 9, got %d", cfg.Goal.TimeoutSeconds)
+	}
+	if cfg.Goal.InterpretReasoningEffort != DefaultGoalInterpretReasoningEffort {
+		t.Fatalf("expected default interpreter reasoning, got %q", cfg.Goal.InterpretReasoningEffort)
+	}
+	if cfg.Goal.InterpretTimeoutSeconds != 1 {
+		t.Fatalf("expected interpreter timeout normalized to 1, got %d", cfg.Goal.InterpretTimeoutSeconds)
 	}
 	if cfg.Goal.MaxOutputBytes != DefaultGoalMaxOutputBytes {
 		t.Fatalf("expected default max output, got %d", cfg.Goal.MaxOutputBytes)

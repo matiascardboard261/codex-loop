@@ -24,6 +24,6 @@ Activation supports exactly one limiter:
 [[CODEX_LOOP name="qa" goal="finish only when verified"]]
 ```
 
-Goal loops confirm completion with a configurable headless command. The default is `codex exec --yolo`, `gpt-5.5`, and reasoning effort `high`; custom runners can be configured with `[goal].confirm_command` as a shell-like string that codex-loop parses to argv before direct execution.
+Goal loops confirm completion with a configurable headless command that returns normal text. The default confirmation command is `codex exec --yolo`, `gpt-5.5`, and reasoning effort `high`; custom runners can be configured with `[goal].confirm_command` as a shell-like string that codex-loop parses to argv before direct execution. codex-loop then privately interprets the text with a fixed `codex exec --output-schema` step; the default interpreter uses `gpt-5.4-mini` and reasoning effort `low`.
 
 After installing or updating the plugin or runtime, restart Codex.
