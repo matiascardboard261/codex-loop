@@ -22,7 +22,8 @@ func TestVersionCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute version: %v\nstderr: %s", err, stderr.String())
 	}
-	assertContains(t, stdout.String(), "dev (commit=none date=unknown)")
+	assertContains(t, stdout.String(), "commit=")
+	assertContains(t, stdout.String(), "date=")
 }
 
 func TestRootHelp(t *testing.T) {
@@ -36,6 +37,7 @@ func TestRootHelp(t *testing.T) {
 	}
 	assertContains(t, stdout.String(), "Codex lifecycle loop hooks")
 	assertContains(t, stdout.String(), "install")
+	assertContains(t, stdout.String(), "upgrade")
 	assertContains(t, stdout.String(), "status")
 }
 

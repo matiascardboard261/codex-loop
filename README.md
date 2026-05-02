@@ -32,7 +32,7 @@ It is designed for release-grade QA, long-running hardening passes, and repeated
 - **Pre-continuation context hook.** `pre_loop_continue` runs right before each automatic continuation so the next prompt can carry fresh local context — test summaries, changed files, build status, custom checklists.
 - **Codex lifecycle integration.** Ships as a Codex plugin, contributing `UserPromptSubmit` and `Stop` hooks, and mirrors managed registrations into `~/.codex/hooks.json` for current Codex builds.
 - **Local-first state.** Loop state lives under `~/.codex/codex-loop/`, isolated by Codex `session_id`. Compact verdict metadata lands in `~/.codex/codex-loop/runs.jsonl`.
-- **Single Go binary.** No Python runtime, no daemon, no network calls from `codex-loop` itself.
+- **Single Go binary.** No Python runtime, no daemon, and no built-in network client except the explicit `codex-loop upgrade` release download path. User-configured continuation and goal commands run as external tools.
 
 ## 📦 Installation
 
@@ -41,6 +41,22 @@ It is designed for release-grade QA, long-running hardening passes, and repeated
 ```bash
 go install github.com/compozy/codex-loop/cmd/codex-loop@latest
 codex-loop install
+```
+
+For an exact release:
+
+```bash
+go install github.com/compozy/codex-loop/cmd/codex-loop@v0.1.1
+codex-loop install
+codex plugin marketplace add compozy/codex-loop --ref v0.1.1
+codex plugin marketplace upgrade codex-loop-plugins
+```
+
+For an existing install, `codex-loop` can perform the release download, checksum verification, managed runtime refresh, and Codex marketplace refresh in one command:
+
+```bash
+codex-loop upgrade              # latest GitHub release
+codex-loop upgrade --version v0.1.1
 ```
 
 `codex-loop install` creates or updates:
@@ -118,6 +134,8 @@ Loop state is isolated by Codex `session_id`. Exactly one limiter — `min`, `ro
 
 ```bash
 codex-loop install
+codex-loop upgrade
+codex-loop upgrade --version v0.1.1
 codex-loop status
 codex-loop status --all
 codex-loop status --session-id <id>
@@ -277,7 +295,7 @@ make release-snapshot    # Build local snapshot artifacts under dist/ (no publis
 ```
 
 - GitHub Actions runs `make verify` on pushes and pull requests to `main`.
-- Pushing normal changes to `main` runs the release workflow in release-PR mode. It uses `github.com/compozy/releasepr@v0.0.21` to calculate the next semantic version, generate `CHANGELOG.md`, generate the current `RELEASE_BODY.md`, update historical `RELEASE_NOTES.md`, and open or update a `release/vX.Y.Z` pull request.
+- Pushing normal changes to `main` runs the release workflow in release-PR mode. It uses `github.com/compozy/releasepr@v0.0.21` to calculate the next semantic version, generate `CHANGELOG.md`, generate the current `RELEASE_BODY.md`, update historical `RELEASE_NOTES.md`, sync the Codex plugin manifest version, and open or update a `release/vX.Y.Z` pull request.
 - Release pull requests run CI plus a GoReleaser dry-run check before merge.
 - Merging a release pull request to `main` creates the `vX.Y.Z` tag and publishes the GitHub release through GoReleaser using `RELEASE_BODY.md`.
 - The release workflow requires a `RELEASE_TOKEN` secret with permission to push release branches/tags, open pull requests, and dispatch workflows.

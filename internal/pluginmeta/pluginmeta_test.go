@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -15,6 +16,13 @@ func TestPluginManifestAndMarketplaceMetadata(t *testing.T) {
 	manifest := readJSONFile(t, filepath.Join(root, "plugins", "codex-loop", ".codex-plugin", "plugin.json"))
 	if manifest["name"] != "codex-loop" {
 		t.Fatalf("unexpected plugin name %#v", manifest["name"])
+	}
+	version, ok := manifest["version"].(string)
+	if !ok {
+		t.Fatalf("unexpected plugin version %#v", manifest["version"])
+	}
+	if !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`).MatchString(version) {
+		t.Fatalf("plugin version must be semantic, got %q", version)
 	}
 	if manifest["skills"] != "./skills/" {
 		t.Fatalf("unexpected skills path %#v", manifest["skills"])

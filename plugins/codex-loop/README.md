@@ -14,6 +14,13 @@ go install github.com/compozy/codex-loop/cmd/codex-loop@latest
 codex-loop install
 ```
 
+Existing installs can be updated with:
+
+```bash
+codex-loop upgrade              # latest GitHub release
+codex-loop upgrade --version v0.1.1
+```
+
 `codex-loop install` also mirrors those managed hook registrations into `~/.codex/hooks.json` so current Codex builds execute them reliably without overwriting unrelated user hooks. The bundled Stop hook default timeout is 2700 seconds so goal confirmation can run slow reasoning models; user-specific timeout changes live in `~/.codex/codex-loop/config.toml` and require rerunning `codex-loop install`.
 
 Activation supports exactly one limiter:

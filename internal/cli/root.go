@@ -10,6 +10,7 @@ import (
 
 	"github.com/compozy/codex-loop/internal/installer"
 	"github.com/compozy/codex-loop/internal/loop"
+	"github.com/compozy/codex-loop/internal/updater"
 	"github.com/compozy/codex-loop/internal/version"
 )
 
@@ -38,6 +39,7 @@ func NewRootCommand(ctx context.Context) *cobra.Command {
 	cmd.PersistentFlags().StringVar(&opts.codexHome, "codex-home", "", "override Codex home directory (defaults to CODEX_HOME or ~/.codex)")
 
 	cmd.AddCommand(newInstallCommand(opts))
+	cmd.AddCommand(newUpgradeCommand(opts))
 	cmd.AddCommand(newUninstallCommand(opts))
 	cmd.AddCommand(newStatusCommand(opts))
 	cmd.AddCommand(newVersionCommand())
@@ -70,6 +72,49 @@ func newInstallCommand(opts *rootOptions) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&sourceBinary, "source-binary", "", "source binary to install into the Codex runtime")
 	_ = cmd.Flags().MarkHidden("source-binary")
+	return cmd
+}
+
+func newUpgradeCommand(opts *rootOptions) *cobra.Command {
+	var version string
+	var targetBinary string
+	var apiBaseURL string
+	var skipMarketplace bool
+	var skipSelfUpdate bool
+
+	cmd := &cobra.Command{
+		Use:   "upgrade",
+		Short: "Download and install the latest codex-loop release",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			paths, err := pathsFromOptions(opts)
+			if err != nil {
+				return err
+			}
+			messages, err := updater.Upgrade(cmd.Context(), paths, updater.Options{
+				Version:         version,
+				TargetBinary:    targetBinary,
+				APIBaseURL:      apiBaseURL,
+				SkipMarketplace: skipMarketplace,
+				SkipSelfUpdate:  skipSelfUpdate,
+			})
+			if err != nil {
+				return err
+			}
+			for _, message := range messages {
+				if _, err := fmt.Fprintln(cmd.OutOrStdout(), message); err != nil {
+					return fmt.Errorf("write upgrade output: %w", err)
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&version, "version", "latest", "release version to install, such as latest or v0.1.1")
+	cmd.Flags().StringVar(&targetBinary, "target-binary", "", "CLI binary path to replace (defaults to the running codex-loop executable)")
+	cmd.Flags().BoolVar(&skipMarketplace, "skip-marketplace", false, "skip Codex plugin marketplace refresh")
+	cmd.Flags().BoolVar(&skipSelfUpdate, "skip-self-update", false, "skip replacing the running CLI binary and only refresh the managed runtime")
+	cmd.Flags().StringVar(&apiBaseURL, "api-base-url", "", "GitHub API base URL")
+	_ = cmd.Flags().MarkHidden("api-base-url")
 	return cmd
 }
 

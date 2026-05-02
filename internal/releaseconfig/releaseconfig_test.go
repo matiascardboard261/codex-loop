@@ -35,6 +35,9 @@ func TestReleaseWorkflowDispatchesReleasePullRequestChecks(t *testing.T) {
 
 	workflow := readRepoFile(t, ".github", "workflows", "release.yml")
 
+	assertContains(t, workflow, "Sync Plugin Manifest Version")
+	assertContains(t, workflow, "plugins/codex-loop/.codex-plugin/plugin.json")
+	assertContains(t, workflow, `payload["version"] = os.environ["RELEASE_BRANCH"].removeprefix("release/v")`)
 	assertContains(t, workflow, "Dispatch Release PR Checks")
 	assertContains(t, workflow, "steps.pr_release.outputs.has_release_pr == 'true'")
 	assertContains(t, workflow, "RELEASE_BRANCH: ${{ steps.pr_release.outputs.release_branch }}")

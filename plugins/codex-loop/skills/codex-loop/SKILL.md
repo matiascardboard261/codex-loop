@@ -12,13 +12,16 @@ description: Install or refresh the Codex Loop runtime for structured [[CODEX_LO
 2. Read `~/.codex/codex-loop/config.toml` only if it exists so you can describe optional continuation guidance, goal confirmation settings, Stop hook timeout, and any argv-based `pre_loop_continue` command.
 3. Do not hand-edit global hook files for normal setup; `codex-loop install` syncs the bundled hook commands into `~/.codex/hooks.json` while preserving unrelated hooks.
 
-**Step 2: Install or refresh the runtime**
+**Step 2: Install, refresh, or upgrade the runtime**
 1. If `codex-loop` is not on `PATH`, install it:
    - `go install github.com/compozy/codex-loop/cmd/codex-loop@latest`
 2. Execute:
    - `codex-loop install`
-3. Read the command output and report the runtime path, loop state path, managed hook config path, and config path.
-4. Tell the user to restart Codex so plugin lifecycle hooks and `features.codex_hooks` are reloaded.
+3. If the user asks to update an existing install, prefer:
+   - `codex-loop upgrade`
+   - or `codex-loop upgrade --version v0.1.1` for a pinned release.
+4. Read the command output and report the runtime path, loop state path, managed hook config path, config path, and whether Codex plugin marketplace refresh ran or was skipped.
+5. Tell the user to restart Codex so plugin lifecycle hooks and `features.codex_hooks` are reloaded.
 
 **Step 3: Explain activation**
 1. Tell the user that loop activation must be the first line of the prompt.
@@ -35,6 +38,8 @@ description: Install or refresh the Codex Loop runtime for structured [[CODEX_LO
 ## Commands
 
 - `codex-loop install`: install or refresh the local runtime under `~/.codex/codex-loop/` and sync managed hook registrations into `~/.codex/hooks.json`.
+- `codex-loop upgrade`: download the latest GitHub release, verify checksums, replace the local CLI binary, refresh the managed runtime/hooks, and refresh the Codex plugin marketplace when the Codex CLI is available.
+- `codex-loop upgrade --version v0.1.1`: install a pinned release with the same checks.
 - `codex-loop status`: print active loop state as JSON.
 - `codex-loop status --all`: include completed, superseded, and cut-short loops.
 - `codex-loop uninstall`: remove the managed `~/.codex/codex-loop/` runtime directory and only the `codex-loop`-managed hook registrations.
