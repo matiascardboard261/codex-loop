@@ -268,7 +268,18 @@ make release-snapshot    # Build local snapshot artifacts under dist/ (no publis
 ```
 
 - GitHub Actions runs `make verify` on pushes and pull requests to `main`.
-- Pushing a `v*` tag publishes a GitHub release through GoReleaser.
+- Pushing normal changes to `main` runs the release workflow in release-PR mode. It uses `github.com/compozy/releasepr@v0.0.21` to calculate the next semantic version, generate `CHANGELOG.md`, generate the current `RELEASE_BODY.md`, update historical `RELEASE_NOTES.md`, and open or update a `release/vX.Y.Z` pull request.
+- Release pull requests run CI plus a GoReleaser dry-run check before merge.
+- Merging a release pull request to `main` creates the `vX.Y.Z` tag and publishes the GitHub release through GoReleaser using `RELEASE_BODY.md`.
+- The release workflow requires a `RELEASE_TOKEN` secret with permission to push release branches/tags, open pull requests, and dispatch workflows.
+
+Manual release notes can be staged before the release PR is generated:
+
+```bash
+go run github.com/compozy/releasepr@v0.0.21 add-note --title "Short title" --type feature
+```
+
+Generated note files live in `.release-notes/`. The release PR archives consumed notes under `.release-notes/archive/vX.Y.Z/` and keeps `.release-notes/.gitkeep` in place for future notes.
 
 ## 🔒 Privacy
 

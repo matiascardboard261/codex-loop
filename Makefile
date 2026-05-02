@@ -1,4 +1,4 @@
-MAGE ?= $(shell command -v mage 2>/dev/null)
+MAGE ?= $(shell if command -v mage >/dev/null 2>&1 && mage -version >/dev/null 2>&1; then command -v mage; fi)
 
 ifeq ($(strip $(MAGE)),)
 MAGE_RUN = go run github.com/magefile/mage@v1.17.0
