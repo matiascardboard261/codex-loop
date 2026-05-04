@@ -72,7 +72,7 @@ codex-loop upgrade --version v0.1.1
 Register this repo as a Codex plugin marketplace:
 
 ```bash
-codex plugin marketplace add github.com/compozy/codex-loop
+codex plugin marketplace add compozy/codex-loop
 ```
 
 For local development from this checkout:
