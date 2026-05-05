@@ -9,8 +9,9 @@ description: Install or refresh the Codex Loop runtime for structured [[CODEX_LO
 
 **Step 1: Inspect current global Codex state**
 1. Read `~/.codex/config.toml` only if it exists so you can explain whether `features.codex_hooks` was already enabled.
-2. Read `~/.codex/codex-loop/config.toml` only if it exists so you can describe optional continuation guidance, goal confirmation settings, Stop hook timeout, and any argv-based `pre_loop_continue` command.
-3. Do not hand-edit global hook files for normal setup; `codex-loop install` syncs the bundled hook commands into `~/.codex/hooks.json` while preserving unrelated hooks.
+2. Read `~/.codex/codex-loop/config.toml` only if it exists so you can describe optional continuation guidance, goal confirmation settings, Stop hook timeout, and any string-based `pre_loop_continue` command.
+3. When an active workspace is known, read the nearest `codex-loop.toml` from the current directory up to the workspace root if it exists. Treat it as a per-field project overlay over the global runtime config.
+4. Do not hand-edit global hook files for normal setup; `codex-loop install` syncs the bundled hook commands into `~/.codex/hooks.json` while preserving unrelated hooks.
 
 **Step 2: Install, refresh, or upgrade the runtime**
 1. If `codex-loop` is not on `PATH`, install it:
@@ -43,7 +44,8 @@ description: Install or refresh the Codex Loop runtime for structured [[CODEX_LO
 - `codex-loop status`: print active loop state as JSON.
 - `codex-loop status --all`: include completed, superseded, and cut-short loops.
 - `codex-loop uninstall`: remove the managed `~/.codex/codex-loop/` runtime directory and only the `codex-loop`-managed hook registrations.
-- `[pre_loop_continue]`: optional codex-loop runtime hook configured with a shell-like `command = ""` string that is parsed to argv and run synchronously inside the Stop handler before an automatic continuation prompt is emitted.
+- `codex-loop.toml`: optional project-local runtime config discovered from the hook CWD up to the workspace root. Fields defined there override the global `~/.codex/codex-loop/config.toml`; omitted fields inherit global/default values.
+- `[pre_loop_continue]`: optional codex-loop runtime hook configured with a shell-like `command = ""` string that is parsed to argv and run synchronously inside the Stop handler before an automatic continuation prompt is emitted. Project-local `command = ""` disables a global pre-loop command for that project.
 - `[goal]`: optional defaults for goal confirmation, including `confirm_model`, `confirm_reasoning_effort`, `confirm_command`, `timeout_seconds`, `interpret_model`, `interpret_reasoning_effort`, `interpret_timeout_seconds`, and `max_output_bytes`.
 - `[hooks].stop_timeout_seconds`: managed Stop hook timeout written during `codex-loop install`; rerun install and restart Codex after changing it.
 

@@ -248,6 +248,11 @@ func TestStopGoalModeContinuesWhenIncompleteAndRunsPreLoopContinue(t *testing.T)
 	t.Setenv("FAKE_CODEX_REVIEW", "The task is not complete. Missing work: run integration tests.")
 	t.Setenv("FAKE_INTERPRET_VERDICT", `{"completed":false,"confidence":0.35,"reason":"tests are missing","missing_work":["run integration tests"],"next_round_guidance":"add real verification"}`)
 	writeRuntimeConfig(t, paths, `[goal]
+confirm_command = "/bin/sh -c 'exit 7'"
+timeout_seconds = 5
+interpret_timeout_seconds = 5
+`)
+	writeProjectRuntimeConfig(t, repoRoot, `[goal]
 `+fakeGoalConfirmCommandConfig(fakeCodex)+`
 timeout_seconds = 5
 interpret_timeout_seconds = 5
@@ -694,6 +699,40 @@ cwd = "workspace_root"
 	reason := result["reason"].(string)
 	assertContains(t, reason, "pre_loop_continue output:")
 	assertContains(t, reason, repoRoot)
+}
+
+func TestStopUsesProjectPreLoopContinueOverGlobal(t *testing.T) {
+	t.Parallel()
+
+	paths := mustPaths(t)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	sessionCWD := filepath.Join(repoRoot, "nested")
+	if err := os.MkdirAll(sessionCWD, 0o755); err != nil {
+		t.Fatalf("create session cwd: %v", err)
+	}
+	writeRuntimeConfig(t, paths, `[pre_loop_continue]
+command = "/bin/sh -c 'printf global-pre-loop'"
+cwd = "session_cwd"
+`)
+	writeProjectRuntimeConfig(t, repoRoot, `[pre_loop_continue]
+command = "/bin/pwd"
+cwd = "workspace_root"
+`)
+
+	start := fixedTime()
+	writeLoop(t, paths, "sess-1", repoRoot, `[[CODEX_LOOP name="release-stress-qa" rounds="2"]]`+"\nRun the QA task.", start)
+	result, err := HandleStop(context.Background(), paths, StopPayload{
+		SessionID: "sess-1",
+		CWD:       sessionCWD,
+	}, start.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("handle stop: %v", err)
+	}
+
+	reason := result["reason"].(string)
+	assertContains(t, reason, "pre_loop_continue output:")
+	assertContains(t, reason, repoRoot)
+	assertNotContains(t, reason, "global-pre-loop")
 }
 
 func TestStopPreLoopContinueFailureContinuesWithWarning(t *testing.T) {

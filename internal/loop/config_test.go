@@ -1,6 +1,8 @@
 package loop
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -231,5 +233,173 @@ max_output_bytes = -1
 	}
 	if cfg.PreLoopContinue.MaxOutputBytes != DefaultPreLoopContinueMaxOutputBytes {
 		t.Fatalf("expected default max output, got %d", cfg.PreLoopContinue.MaxOutputBytes)
+	}
+}
+
+func TestEffectiveRuntimeConfigUsesGlobalWhenProjectConfigIsMissing(t *testing.T) {
+	t.Parallel()
+
+	paths := mustPaths(t)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	nested := filepath.Join(repoRoot, "nested")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatalf("create nested repo dir: %v", err)
+	}
+	writeRuntimeConfig(t, paths, `[pre_loop_continue]
+command = "/bin/echo global"
+cwd = "workspace_root"
+timeout_seconds = 11
+max_output_bytes = 22
+`)
+
+	cfg := LoadEffectiveRuntimeConfig(paths, nested, repoRoot)
+
+	if cfg.PreLoopContinue.Command != "/bin/echo global" {
+		t.Fatalf("unexpected command %#v", cfg.PreLoopContinue.Command)
+	}
+	if cfg.PreLoopContinue.CWD != PreLoopContinueCWDWorkspace {
+		t.Fatalf("unexpected cwd %q", cfg.PreLoopContinue.CWD)
+	}
+	if cfg.PreLoopContinue.TimeoutSeconds != 11 {
+		t.Fatalf("unexpected timeout %d", cfg.PreLoopContinue.TimeoutSeconds)
+	}
+	if cfg.PreLoopContinue.MaxOutputBytes != 22 {
+		t.Fatalf("unexpected max output %d", cfg.PreLoopContinue.MaxOutputBytes)
+	}
+}
+
+func TestEffectiveRuntimeConfigOverlaysProjectFields(t *testing.T) {
+	t.Parallel()
+
+	paths := mustPaths(t)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	nested := filepath.Join(repoRoot, "nested")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatalf("create nested repo dir: %v", err)
+	}
+	writeRuntimeConfig(t, paths, `[goal]
+confirm_model = ""
+confirm_reasoning_effort = ""
+
+[pre_loop_continue]
+command = "/bin/echo global"
+cwd = "workspace_root"
+timeout_seconds = 11
+max_output_bytes = 22
+`)
+	writeProjectRuntimeConfig(t, repoRoot, `[pre_loop_continue]
+timeout_seconds = 5
+`)
+
+	cfg := LoadEffectiveRuntimeConfig(paths, nested, repoRoot)
+
+	if cfg.PreLoopContinue.Command != "/bin/echo global" {
+		t.Fatalf("expected inherited command, got %#v", cfg.PreLoopContinue.Command)
+	}
+	if cfg.PreLoopContinue.CWD != PreLoopContinueCWDWorkspace {
+		t.Fatalf("expected inherited cwd, got %q", cfg.PreLoopContinue.CWD)
+	}
+	if cfg.PreLoopContinue.TimeoutSeconds != 5 {
+		t.Fatalf("expected project timeout, got %d", cfg.PreLoopContinue.TimeoutSeconds)
+	}
+	if cfg.PreLoopContinue.MaxOutputBytes != 22 {
+		t.Fatalf("expected inherited max output, got %d", cfg.PreLoopContinue.MaxOutputBytes)
+	}
+	if cfg.Goal.ConfirmModel != "" {
+		t.Fatalf("expected inherited blank goal model, got %q", cfg.Goal.ConfirmModel)
+	}
+	if cfg.Goal.ConfirmReasoningEffort != "" {
+		t.Fatalf("expected inherited blank goal reasoning, got %q", cfg.Goal.ConfirmReasoningEffort)
+	}
+}
+
+func TestEffectiveRuntimeConfigProjectBlankCommandDisablesGlobalCommand(t *testing.T) {
+	t.Parallel()
+
+	paths := mustPaths(t)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("create repo root: %v", err)
+	}
+	writeRuntimeConfig(t, paths, `[pre_loop_continue]
+command = "/bin/echo global"
+timeout_seconds = 11
+`)
+	writeProjectRuntimeConfig(t, repoRoot, `[pre_loop_continue]
+command = ""
+`)
+
+	cfg := LoadEffectiveRuntimeConfig(paths, repoRoot, repoRoot)
+
+	if cfg.PreLoopContinue.Command != "" {
+		t.Fatalf("expected local blank command to disable global command, got %#v", cfg.PreLoopContinue.Command)
+	}
+	if cfg.PreLoopContinue.TimeoutSeconds != 11 {
+		t.Fatalf("expected inherited timeout, got %d", cfg.PreLoopContinue.TimeoutSeconds)
+	}
+}
+
+func TestEffectiveRuntimeConfigUsesNearestProjectConfigOnly(t *testing.T) {
+	t.Parallel()
+
+	paths := mustPaths(t)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	nested := filepath.Join(repoRoot, "nested")
+	deeper := filepath.Join(nested, "deeper")
+	if err := os.MkdirAll(deeper, 0o755); err != nil {
+		t.Fatalf("create nested repo dir: %v", err)
+	}
+	writeRuntimeConfig(t, paths, `[pre_loop_continue]
+command = "/bin/echo global"
+timeout_seconds = 11
+`)
+	writeProjectRuntimeConfig(t, repoRoot, `[pre_loop_continue]
+command = "/bin/echo root"
+`)
+	writeProjectRuntimeConfig(t, nested, `[pre_loop_continue]
+timeout_seconds = 3
+`)
+
+	cfg := LoadEffectiveRuntimeConfig(paths, deeper, repoRoot)
+
+	if cfg.PreLoopContinue.Command != "/bin/echo global" {
+		t.Fatalf("expected nearest partial config to inherit from global instead of root config, got %#v", cfg.PreLoopContinue.Command)
+	}
+	if cfg.PreLoopContinue.TimeoutSeconds != 3 {
+		t.Fatalf("expected nearest timeout, got %d", cfg.PreLoopContinue.TimeoutSeconds)
+	}
+}
+
+func TestEffectiveRuntimeConfigDoesNotReadAboveWorkspaceRoot(t *testing.T) {
+	t.Parallel()
+
+	paths := mustPaths(t)
+	parent := t.TempDir()
+	repoRoot := filepath.Join(parent, "repo")
+	nested := filepath.Join(repoRoot, "nested")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatalf("create nested repo dir: %v", err)
+	}
+	writeRuntimeConfig(t, paths, `[pre_loop_continue]
+command = "/bin/echo global"
+`)
+	writeProjectRuntimeConfig(t, parent, `[pre_loop_continue]
+command = "/bin/echo parent"
+`)
+
+	cfg := LoadEffectiveRuntimeConfig(paths, nested, repoRoot)
+
+	if cfg.PreLoopContinue.Command != "/bin/echo global" {
+		t.Fatalf("expected global command because parent config is above workspace, got %#v", cfg.PreLoopContinue.Command)
+	}
+}
+
+func writeProjectRuntimeConfig(t *testing.T, dir string, content string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("create project config dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, projectRuntimeConfigFilename), []byte(content), 0o644); err != nil {
+		t.Fatalf("write project runtime config: %v", err)
 	}
 }

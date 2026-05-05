@@ -148,7 +148,7 @@ codex-loop version
 
 ## ⚙️ Continuation Customization
 
-`~/.codex/codex-loop/config.toml` supports:
+The global runtime config lives at `~/.codex/codex-loop/config.toml` and supports:
 
 ```toml
 optional_skill_name = ""
@@ -179,6 +179,27 @@ max_output_bytes = 12000
 - `optional_skill_path` may point to a skill directory or directly to `SKILL.md`.
 - `extra_continuation_guidance` appends extra text to every automatic continuation.
 - `hooks.stop_timeout_seconds` controls the managed Codex `Stop` hook timeout written by `codex-loop install`; rerun `codex-loop install` and restart Codex after changing it.
+
+Projects may also define `codex-loop.toml` in the workspace. During an active loop, codex-loop searches from the Codex hook CWD up to the resolved workspace root and uses the nearest `codex-loop.toml` it finds. It never searches above the workspace root.
+
+Project config overlays the global config by field:
+
+- Effective runtime config is `defaults` -> global `~/.codex/codex-loop/config.toml` -> project `codex-loop.toml`.
+- Fields defined in `codex-loop.toml` override the global value.
+- Fields omitted from `codex-loop.toml` inherit the global value or default.
+- `command = ""` in project `[pre_loop_continue]` disables a global pre-loop command for that project.
+- `[hooks].stop_timeout_seconds` remains an install-time global setting. Local project config does not rewrite installed Codex hook registrations.
+
+Project-local example:
+
+```toml
+# ./codex-loop.toml
+[pre_loop_continue]
+command = ".codex/scripts/loop-context.sh --input $INPUT_FILE"
+cwd = "workspace_root"
+timeout_seconds = 30
+max_output_bytes = 8000
+```
 
 ### 🎯 Goal Confirmation
 
@@ -239,6 +260,7 @@ Use it when the next continuation prompt should include fresh local context comp
 **Example config:**
 
 ```toml
+# ~/.codex/codex-loop/config.toml or ./codex-loop.toml
 [pre_loop_continue]
 command = ".codex/scripts/loop-context.sh --format markdown --input $INPUT_FILE"
 cwd = "session_cwd"

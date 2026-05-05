@@ -91,8 +91,8 @@ func (b *limitedOutputBuffer) String() string {
 	return b.buffer.String()
 }
 
-func appendPreLoopContinue(ctx context.Context, paths Paths, payload StopPayload, record LoopRecord, remainingSeconds *int, aggressive bool, reason string, now time.Time) string {
-	cfg := normalizeRuntimeConfig(LoadRuntimeConfig(paths)).PreLoopContinue
+func appendPreLoopContinue(ctx context.Context, paths Paths, cfg PreLoopContinueConfig, payload StopPayload, record LoopRecord, remainingSeconds *int, aggressive bool, reason string, now time.Time) string {
+	cfg = normalizeRuntimeConfig(RuntimeConfig{PreLoopContinue: cfg}).PreLoopContinue
 	if strings.TrimSpace(cfg.Command) == "" {
 		return reason
 	}

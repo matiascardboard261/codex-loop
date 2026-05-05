@@ -38,6 +38,8 @@ timeout_seconds = 60
 max_output_bytes = 12000
 `
 
+const projectRuntimeConfigFilename = "codex-loop.toml"
+
 type RuntimeConfig struct {
 	OptionalSkillName         string                `toml:"optional_skill_name"`
 	OptionalSkillPath         string                `toml:"optional_skill_path"`
@@ -76,28 +78,15 @@ type OptionalContinuationConfig struct {
 }
 
 func LoadRuntimeConfig(paths Paths) RuntimeConfig {
-	cfg := defaultRuntimeConfig()
-	path := paths.RuntimeConfigPath()
-	if _, err := os.Stat(path); err != nil {
-		return cfg
+	return loadRuntimeConfigFile(paths.RuntimeConfigPath(), defaultRuntimeConfig())
+}
+
+func LoadEffectiveRuntimeConfig(paths Paths, cwd string, workspaceRoot string) RuntimeConfig {
+	cfg := LoadRuntimeConfig(paths)
+	if projectConfigPath, ok := findProjectRuntimeConfig(cwd, workspaceRoot); ok {
+		return loadRuntimeConfigFile(projectConfigPath, cfg)
 	}
-	if metadata, err := toml.DecodeFile(path, &cfg); err == nil {
-		normalized := normalizeRuntimeConfig(cfg)
-		if metadata.IsDefined("goal", "confirm_model") && strings.TrimSpace(cfg.Goal.ConfirmModel) == "" {
-			normalized.Goal.ConfirmModel = ""
-		}
-		if metadata.IsDefined("goal", "confirm_reasoning_effort") && strings.TrimSpace(cfg.Goal.ConfirmReasoningEffort) == "" {
-			normalized.Goal.ConfirmReasoningEffort = ""
-		}
-		if metadata.IsDefined("goal", "interpret_model") && strings.TrimSpace(cfg.Goal.InterpretModel) == "" {
-			normalized.Goal.InterpretModel = ""
-		}
-		if metadata.IsDefined("goal", "interpret_reasoning_effort") && strings.TrimSpace(cfg.Goal.InterpretReasoningEffort) == "" {
-			normalized.Goal.InterpretReasoningEffort = ""
-		}
-		return normalized
-	}
-	return parseRuntimeConfigFallback(path)
+	return cfg
 }
 
 func defaultRuntimeConfig() RuntimeConfig {
@@ -179,8 +168,7 @@ func normalizeRuntimeConfig(cfg RuntimeConfig) RuntimeConfig {
 	return cfg
 }
 
-func ResolveOptionalContinuationConfig(paths Paths, workspaceRoot string) OptionalContinuationConfig {
-	cfg := LoadRuntimeConfig(paths)
+func ResolveOptionalContinuationConfig(cfg RuntimeConfig, workspaceRoot string) OptionalContinuationConfig {
 	skillName := strings.TrimSpace(cfg.OptionalSkillName)
 	skillPathText := strings.TrimSpace(cfg.OptionalSkillPath)
 	extraGuidance := strings.TrimSpace(cfg.ExtraContinuationGuidance)
@@ -214,12 +202,45 @@ func ResolveOptionalContinuationConfig(paths Paths, workspaceRoot string) Option
 	}
 }
 
-func parseRuntimeConfigFallback(path string) RuntimeConfig {
+func loadRuntimeConfigFile(path string, base RuntimeConfig) RuntimeConfig {
+	if _, err := os.Stat(path); err != nil {
+		return base
+	}
+	cfg := base
+	metadata, err := toml.DecodeFile(path, &cfg)
+	if err != nil {
+		return parseRuntimeConfigFallback(path, base)
+	}
+	return normalizeRuntimeConfigWithMetadata(cfg, base, metadata)
+}
+
+func normalizeRuntimeConfigWithMetadata(cfg RuntimeConfig, base RuntimeConfig, metadata toml.MetaData) RuntimeConfig {
+	normalized := normalizeRuntimeConfig(cfg)
+	if shouldPreserveBlankGoalValue(base.Goal.ConfirmModel, cfg.Goal.ConfirmModel, metadata, "confirm_model") {
+		normalized.Goal.ConfirmModel = ""
+	}
+	if shouldPreserveBlankGoalValue(base.Goal.ConfirmReasoningEffort, cfg.Goal.ConfirmReasoningEffort, metadata, "confirm_reasoning_effort") {
+		normalized.Goal.ConfirmReasoningEffort = ""
+	}
+	if shouldPreserveBlankGoalValue(base.Goal.InterpretModel, cfg.Goal.InterpretModel, metadata, "interpret_model") {
+		normalized.Goal.InterpretModel = ""
+	}
+	if shouldPreserveBlankGoalValue(base.Goal.InterpretReasoningEffort, cfg.Goal.InterpretReasoningEffort, metadata, "interpret_reasoning_effort") {
+		normalized.Goal.InterpretReasoningEffort = ""
+	}
+	return normalized
+}
+
+func shouldPreserveBlankGoalValue(baseValue string, value string, metadata toml.MetaData, key string) bool {
+	return strings.TrimSpace(value) == "" && (strings.TrimSpace(baseValue) == "" || metadata.IsDefined("goal", key))
+}
+
+func parseRuntimeConfigFallback(path string, base RuntimeConfig) RuntimeConfig {
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return defaultRuntimeConfig()
+		return base
 	}
-	cfg := defaultRuntimeConfig()
+	cfg := base
 	for _, rawLine := range strings.Split(string(content), "\n") {
 		line := strings.TrimSpace(rawLine)
 		if line == "" || strings.HasPrefix(line, "#") || !strings.Contains(line, "=") {
@@ -240,6 +261,44 @@ func parseRuntimeConfigFallback(path string) RuntimeConfig {
 		}
 	}
 	return normalizeRuntimeConfig(cfg)
+}
+
+func findProjectRuntimeConfig(cwd string, workspaceRoot string) (string, bool) {
+	workspaceRoot = strings.TrimSpace(workspaceRoot)
+	if workspaceRoot == "" {
+		return "", false
+	}
+	absWorkspaceRoot, err := filepath.Abs(workspaceRoot)
+	if err != nil {
+		return "", false
+	}
+
+	current := strings.TrimSpace(cwd)
+	if current == "" || !pathIsInside(absWorkspaceRoot, current) {
+		current = absWorkspaceRoot
+	}
+	current, err = filepath.Abs(current)
+	if err != nil {
+		current = absWorkspaceRoot
+	}
+	if !pathIsInside(absWorkspaceRoot, current) {
+		current = absWorkspaceRoot
+	}
+
+	for {
+		candidate := filepath.Join(current, projectRuntimeConfigFilename)
+		if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() {
+			return candidate, true
+		}
+		if filepath.Clean(current) == filepath.Clean(absWorkspaceRoot) {
+			return "", false
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", false
+		}
+		current = parent
+	}
 }
 
 func pathIsInside(root string, candidate string) bool {

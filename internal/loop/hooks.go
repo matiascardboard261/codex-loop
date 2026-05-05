@@ -100,6 +100,7 @@ func HandleStop(ctx context.Context, paths Paths, payload StopPayload, now time.
 	if err != nil {
 		return StopWarning(fmt.Sprintf("Codex loop stop hook failed: %v", err)), nil
 	}
+	runtimeConfig := LoadEffectiveRuntimeConfig(paths, stopConfigSearchCWD(payload, record), stopConfigWorkspaceRoot(record))
 
 	record.LastAssistantMessage = payload.LastAssistantMessage
 	lastStopAt := ISOFormat(now)
@@ -142,7 +143,6 @@ func HandleStop(ctx context.Context, paths Paths, payload StopPayload, now time.
 			return nil, nil
 		}
 	} else if limitMode == LimitModeGoal {
-		runtimeConfig := LoadRuntimeConfig(paths)
 		record.GoalCheckCount++
 		checkedAt := ISOFormat(now)
 		record.LastGoalCheckAt = &checkedAt
@@ -209,13 +209,12 @@ func HandleStop(ctx context.Context, paths Paths, payload StopPayload, now time.
 		return StopWarning(fmt.Sprintf("Codex loop stop hook failed: %v", err)), nil
 	}
 
-	reason := ContinuationReason(paths, record, remainingSeconds, aggressive)
+	reason := ContinuationReason(runtimeConfig, record, remainingSeconds, aggressive)
 	if goalResult != nil {
-		reason = GoalContinuationReason(paths, record, *goalResult, aggressive)
+		reason = GoalContinuationReason(runtimeConfig, record, *goalResult, aggressive)
 	}
-	reason = appendPreLoopContinue(ctx, paths, payload, record, remainingSeconds, aggressive, reason, now)
+	reason = appendPreLoopContinue(ctx, paths, runtimeConfig.PreLoopContinue, payload, record, remainingSeconds, aggressive, reason, now)
 	if goalResult != nil {
-		runtimeConfig := LoadRuntimeConfig(paths)
 		preLoopActive := strings.TrimSpace(runtimeConfig.PreLoopContinue.Command) != ""
 		if err := AppendGoalCheckLog(paths, active.Path, record, *goalResult, true, preLoopActive, now); err != nil {
 			reason = strings.TrimSpace(reason + "\n\ncodex-loop logging warning:\n" + err.Error())
@@ -227,7 +226,29 @@ func HandleStop(ctx context.Context, paths Paths, payload StopPayload, now time.
 	}, nil
 }
 
-func GoalContinuationReason(paths Paths, record LoopRecord, result goalCheckResult, aggressive bool) string {
+func stopConfigWorkspaceRoot(record LoopRecord) string {
+	workspaceRoot := strings.TrimSpace(record.WorkspaceRoot)
+	if workspaceRoot != "" {
+		return workspaceRoot
+	}
+	return strings.TrimSpace(record.CWD)
+}
+
+func stopConfigSearchCWD(payload StopPayload, record LoopRecord) string {
+	workspaceRoot := stopConfigWorkspaceRoot(record)
+	for _, candidate := range []string{payload.CWD, record.CWD, workspaceRoot} {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if workspaceRoot == "" || pathIsInside(workspaceRoot, candidate) {
+			return candidate
+		}
+	}
+	return workspaceRoot
+}
+
+func GoalContinuationReason(runtimeConfig RuntimeConfig, record LoopRecord, result goalCheckResult, aggressive bool) string {
 	workspaceRoot := record.WorkspaceRoot
 	if workspaceRoot == "" {
 		workspaceRoot = record.CWD
@@ -239,7 +260,7 @@ func GoalContinuationReason(paths Paths, record LoopRecord, result goalCheckResu
 	if err == nil {
 		workspaceRoot = absWorkspaceRoot
 	}
-	continuationConfig := ResolveOptionalContinuationConfig(paths, workspaceRoot)
+	continuationConfig := ResolveOptionalContinuationConfig(runtimeConfig, workspaceRoot)
 	originalTask := strings.TrimSpace(record.TaskPrompt)
 	if originalTask == "" {
 		originalTask = strings.TrimSpace(record.ActivationPrompt)
@@ -308,7 +329,7 @@ func GoalContinuationReason(paths Paths, record LoopRecord, result goalCheckResu
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
-func ContinuationReason(paths Paths, record LoopRecord, remainingSeconds *int, aggressive bool) string {
+func ContinuationReason(runtimeConfig RuntimeConfig, record LoopRecord, remainingSeconds *int, aggressive bool) string {
 	workspaceRoot := record.WorkspaceRoot
 	if workspaceRoot == "" {
 		workspaceRoot = record.CWD
@@ -320,7 +341,7 @@ func ContinuationReason(paths Paths, record LoopRecord, remainingSeconds *int, a
 	if err == nil {
 		workspaceRoot = absWorkspaceRoot
 	}
-	continuationConfig := ResolveOptionalContinuationConfig(paths, workspaceRoot)
+	continuationConfig := ResolveOptionalContinuationConfig(runtimeConfig, workspaceRoot)
 	originalTask := strings.TrimSpace(record.TaskPrompt)
 	if originalTask == "" {
 		originalTask = strings.TrimSpace(record.ActivationPrompt)

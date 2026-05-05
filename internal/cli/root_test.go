@@ -176,6 +176,66 @@ command = "/bin/sh -c 'printf cli-pre-loop'"
 	assertContains(t, result["reason"].(string), "cli-pre-loop")
 }
 
+func TestStopHookUsesProjectPreLoopConfigFromPayloadCWD(t *testing.T) {
+	t.Parallel()
+
+	codexHome := filepath.Join(t.TempDir(), ".codex-home")
+	paths, err := loop.NewPaths(codexHome)
+	if err != nil {
+		t.Fatalf("new paths: %v", err)
+	}
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	sessionCWD := filepath.Join(repoRoot, "nested")
+	if err := os.MkdirAll(sessionCWD, 0o755); err != nil {
+		t.Fatalf("create session cwd: %v", err)
+	}
+	activation, ok, err := loop.ExtractActivation(`[[CODEX_LOOP name="qa" rounds="2"]]` + "\nRun QA.")
+	if err != nil {
+		t.Fatalf("extract activation: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected activation")
+	}
+	record := loop.BuildLoopRecord("sess-1", repoRoot, repoRoot, activation, fixedTime())
+	if err := loop.ReplaceLoopFile(loop.CreateLoopPath(paths, record.Slug, fixedTime()), record); err != nil {
+		t.Fatalf("write loop: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.RuntimeConfigPath()), 0o755); err != nil {
+		t.Fatalf("create runtime config dir: %v", err)
+	}
+	if err := os.WriteFile(paths.RuntimeConfigPath(), []byte(`[pre_loop_continue]
+command = "/bin/sh -c 'printf cli-global-pre-loop'"
+`), 0o644); err != nil {
+		t.Fatalf("write runtime config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, "codex-loop.toml"), []byte(`[pre_loop_continue]
+command = "/bin/sh -c 'printf cli-local-pre-loop'"
+`), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+
+	payloadBytes, err := json.Marshal(loop.StopPayload{
+		SessionID: "sess-1",
+		CWD:       sessionCWD,
+	})
+	if err != nil {
+		t.Fatalf("encode payload: %v", err)
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	err = Execute(context.Background(), []string{"--codex-home", codexHome, "hook", "stop"}, bytes.NewReader(payloadBytes), &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("execute stop hook: %v\nstderr: %s", err, stderr.String())
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("decode hook output: %v\nraw: %s", err, stdout.String())
+	}
+	assertContains(t, result["reason"].(string), "cli-local-pre-loop")
+	assertNotContains(t, result["reason"].(string), "cli-global-pre-loop")
+}
+
 func TestInstallCommandAcceptsSourceBinaryForTests(t *testing.T) {
 	t.Parallel()
 
@@ -231,5 +291,12 @@ func assertContains(t *testing.T, haystack string, needle string) {
 	t.Helper()
 	if !strings.Contains(haystack, needle) {
 		t.Fatalf("expected %q to contain %q", haystack, needle)
+	}
+}
+
+func assertNotContains(t *testing.T, haystack string, needle string) {
+	t.Helper()
+	if strings.Contains(haystack, needle) {
+		t.Fatalf("expected %q not to contain %q", haystack, needle)
 	}
 }
